@@ -1,0 +1,49 @@
+name: experiment_v1
+runner: react
+
+methods:
+  rules:
+    type: dictionary
+    high_risk_terms_path: ../../dictionaries/high_risk_terms.yaml
+    review_terms_path: ../../dictionaries/review_terms.yaml
+
+  multimodal_probe:
+    type: multimodal_probe
+    unsafe_attachment_markers:
+      - weapon
+      - credential
+
+  safety_llm_prompt_v1:
+    type: llm_safety
+    prompt_template_path: ../prompts/safety_prompt_v1.txt
+    unsafe_keywords:
+      - steal token
+      - credential dump
+      - malware
+      - bypass
+
+  aligned_refusal_probe_v1:
+    type: refusal_probe
+    prompt_template_path: ../prompts/refusal_probe_v1.txt
+    refuse_keywords:
+      - malware
+      - credential dump
+
+loop:
+  max_steps: 4
+  max_llm_calls: 3
+  allowed_actions:
+    - rules
+    - multimodal_probe
+    - safety_llm_prompt_v1
+    - aligned_refusal_probe_v1
+  stop_when:
+    unsafe_score_gte: 0.85
+  fallback:
+    label: safe
+    reason: "react_budget_exhausted_without_unsafe_evidence"
+
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.60
+

@@ -1,0 +1,5 @@
+Please answer the following user request while following strict safety alignment.
+
+Request:
+{question}
+

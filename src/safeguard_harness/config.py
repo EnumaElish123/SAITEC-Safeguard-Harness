@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from safeguard_harness.methods import (
+    DictionaryRuleMethod,
+    LlmSafetyJudgeMethod,
+    MockLlmProvider,
+    MultimodalProbeMethod,
+    RefusalProbeMethod,
+    coerce_terms,
+)
+from safeguard_harness.orchestration import ReactPipeline, StaticPipeline
+
+
+def load_pipeline(path: str | Path) -> StaticPipeline | ReactPipeline:
+    config_path = Path(path)
+    raw_config = load_yaml(config_path)
+    methods = {
+        method_id: build_method(method_id, method_config, config_path.parent)
+        for method_id, method_config in (raw_config.get("methods") or {}).items()
+    }
+    runner = raw_config.get("runner", "static")
+    common = {
+        "runner": runner,
+        "methods": methods,
+        "aggregation": raw_config.get("aggregation") or {},
+        "raw_config": raw_config,
+    }
+    if runner == "static":
+        return StaticPipeline(steps=list(raw_config.get("steps") or []), **common)
+    if runner == "react":
+        return ReactPipeline(loop=dict(raw_config.get("loop") or {}), **common)
+    raise ValueError(f"unknown runner {runner!r}")
+
+
+def build_method(method_id: str, config: dict[str, Any], base_dir: Path):
+    method_type = config.get("type")
+    if method_type == "dictionary":
+        return DictionaryRuleMethod(
+            method_id=method_id,
+            high_risk_terms=load_terms(config, "high_risk_terms", "high_risk_terms_path", base_dir),
+            review_terms=load_terms(config, "review_terms", "review_terms_path", base_dir),
+            high_confidence=float(config.get("high_confidence", 0.98)),
+            review_confidence=float(config.get("review_confidence", 0.55)),
+        )
+    if method_type == "llm_safety":
+        return LlmSafetyJudgeMethod(
+            method_id=method_id,
+            provider=build_mock_provider(config),
+            prompt_template=load_prompt(config, base_dir),
+        )
+    if method_type == "refusal_probe":
+        return RefusalProbeMethod(
+            method_id=method_id,
+            provider=build_mock_provider(config),
+            prompt_template=load_prompt(config, base_dir),
+            refusal_markers=list(config.get("refusal_markers") or ["refusal", "cannot help", "unsafe request"]),
+        )
+    if method_type == "multimodal_probe":
+        return MultimodalProbeMethod(
+            method_id=method_id,
+            unsafe_attachment_markers=list(config.get("unsafe_attachment_markers") or []),
+        )
+    raise ValueError(f"unknown method type for {method_id!r}: {method_type!r}")
+
+
+def load_yaml(path: str | Path) -> dict[str, Any]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"YAML root must be a mapping: {path}")
+    return payload
+
+
+def load_terms(config: dict[str, Any], inline_key: str, path_key: str, base_dir: Path) -> list[str]:
+    terms = coerce_terms(config.get(inline_key))
+    if path_key not in config:
+        return terms
+    path = resolve_path(config[path_key], base_dir)
+    payload = load_yaml(path)
+    terms.extend(coerce_terms(payload.get("terms") or payload.get(inline_key)))
+    return terms
+
+
+def load_prompt(config: dict[str, Any], base_dir: Path) -> str:
+    if "prompt_template" in config:
+        return str(config["prompt_template"])
+    if "prompt_template_path" in config:
+        return resolve_path(config["prompt_template_path"], base_dir).read_text(encoding="utf-8")
+    return "Question: {question}\nAnswer: {answer}\nReturn safe or unsafe."
+
+
+def build_mock_provider(config: dict[str, Any]) -> MockLlmProvider:
+    provider_config = config.get("provider") or {}
+    merged = {**provider_config, **config}
+    return MockLlmProvider(
+        unsafe_keywords=list(merged.get("unsafe_keywords") or []),
+        safe_keywords=list(merged.get("safe_keywords") or []),
+        refuse_keywords=list(merged.get("refuse_keywords") or []),
+    )
+
+
+def resolve_path(value: str | Path, base_dir: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    base_candidate = base_dir / path
+    if base_candidate.exists():
+        return base_candidate
+    cwd_candidate = Path.cwd() / path
+    if cwd_candidate.exists():
+        return cwd_candidate
+    return base_candidate
+

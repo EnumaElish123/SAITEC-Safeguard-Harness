@@ -1,0 +1,7 @@
+name: sample_eval
+format: jsonl
+path: ../../data/examples/sample_eval.jsonl
+label_set:
+  - safe
+  - unsafe
+
