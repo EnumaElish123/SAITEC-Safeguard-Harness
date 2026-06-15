@@ -1,0 +1,5 @@
+type: mock_prompt_binary
+description: "Local deterministic prompt-binary provider for dry-run pipeline tests."
+default_label: 0
+default_confidence: 0.55
+

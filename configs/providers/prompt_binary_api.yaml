@@ -1,0 +1,16 @@
+type: prompt_binary_api
+description: "Remote API that receives a rendered prompt and returns a binary 0/1 prediction."
+base_url: "https://model-provider.example.com/safety/prompt-binary"
+api_key_env: "SAFEGUARD_PROMPT_API_KEY"
+timeout_seconds: 30
+prompt_field: "prompt"
+expected_response:
+  label_keys:
+    - label
+    - prediction
+    - pred
+  confidence_keys:
+    - confidence
+    - score
+    - probability
+

@@ -1,0 +1,15 @@
+type: classifier_head_api
+description: "Remote API that receives a normalized SafetyCase and returns a binary prediction plus confidence."
+base_url: "https://model-provider.example.com/safety/classifier-head"
+api_key_env: "SAFEGUARD_HEAD_API_KEY"
+timeout_seconds: 30
+expected_response:
+  label_keys:
+    - label
+    - prediction
+    - pred
+  confidence_keys:
+    - confidence
+    - score
+    - probability
+

@@ -1,0 +1,4 @@
+schema_version: 1
+description: "High-risk terms. A hit can short-circuit to unsafe. This starter file is intentionally empty."
+terms: []
+

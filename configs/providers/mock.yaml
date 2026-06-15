@@ -1,0 +1,6 @@
+type: mock
+description: "Deterministic local provider for framework tests and dry runs."
+unsafe_keywords: []
+safe_keywords: []
+refuse_keywords: []
+

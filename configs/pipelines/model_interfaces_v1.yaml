@@ -1,0 +1,30 @@
+name: model_interfaces_v1
+runner: static
+
+methods:
+  prompt_binary_v1:
+    type: prompt_binary_model
+    provider_config: ../providers/mock_prompt_binary.yaml
+    prompt_template_path: ../prompts/safety_prompt_v1.txt
+    default_confidence: 0.55
+
+  classifier_head_v1:
+    type: classifier_head_model
+    provider_config: ../providers/mock_classifier_head.yaml
+    default_confidence: 0.80
+
+steps:
+  - id: prompt_binary_v1
+    method: prompt_binary_v1
+  - id: classifier_head_review
+    repeat:
+      max_rounds: 1
+      when:
+        confidence_lt: 0.75
+      methods:
+        - classifier_head_v1
+
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.60
+
