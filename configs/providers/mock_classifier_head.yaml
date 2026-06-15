@@ -1,0 +1,5 @@
+type: mock_classifier_head
+description: "Local deterministic classifier-head provider for dry-run pipeline tests."
+default_label: 1
+default_confidence: 0.82
+

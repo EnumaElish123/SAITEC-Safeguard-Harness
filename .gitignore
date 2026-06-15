@@ -9,3 +9,6 @@ build/
 dist/
 *.egg-info/
 outputs/
+models/*
+!models/
+!models/README.md

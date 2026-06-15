@@ -1,0 +1,4 @@
+type: local_classifier_head
+description: "Local classifier-head model files. The first framework version stores the path only; implement local inference before using this in a live pipeline."
+model_path: "${SAFEGUARD_HEAD_MODEL_PATH}"
+

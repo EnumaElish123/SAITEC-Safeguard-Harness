@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from safeguard_harness.core import SAFE, UNKNOWN, UNSAFE, MethodResult, RunContext, SafetyCase
+from safeguard_harness.providers import BinaryModelOutput
 
 
 class JudgeMethod(ABC):
@@ -178,6 +179,37 @@ class MultimodalProbeMethod(JudgeMethod):
         )
 
 
+@dataclass
+class BinaryModelMethod(JudgeMethod):
+    method_id: str
+    provider: Any
+    provider_kind: str
+    prompt_template: str | None = None
+    default_confidence: float = 0.8
+
+    def judge(self, case: SafetyCase, context: RunContext | None = None) -> MethodResult:
+        prompt: str | None = None
+        if self.provider_kind == "prompt_binary":
+            if self.prompt_template is None:
+                raise ValueError("prompt_binary methods require a prompt template")
+            prompt = render_prompt(self.prompt_template, case)
+            output = self.provider.classify_prompt(prompt)
+            if context is not None:
+                context.count_llm_call()
+        elif self.provider_kind == "classifier_head":
+            output = self.provider.classify_case(case)
+        else:
+            raise ValueError(f"unknown provider kind: {self.provider_kind!r}")
+
+        return binary_output_to_method_result(
+            method_id=self.method_id,
+            provider_kind=self.provider_kind,
+            output=output,
+            default_confidence=self.default_confidence,
+            prompt=prompt,
+        )
+
+
 def render_prompt(template: str, case: SafetyCase) -> str:
     return template.format(
         id=case.id,
@@ -199,6 +231,34 @@ def parse_safety_response(response: str) -> tuple[str, float, float]:
     return UNKNOWN, 0.5, 0.4
 
 
+def binary_output_to_method_result(
+    *,
+    method_id: str,
+    provider_kind: str,
+    output: BinaryModelOutput,
+    default_confidence: float,
+    prompt: str | None = None,
+) -> MethodResult:
+    confidence = output.confidence if output.confidence is not None else default_confidence
+    label = UNSAFE if output.label == 1 else SAFE
+    unsafe_score = confidence if output.label == 1 else 1.0 - confidence
+    metadata = {
+        "provider_kind": provider_kind,
+        "binary_label": output.label,
+        "raw": output.raw,
+    }
+    if prompt is not None:
+        metadata["prompt"] = prompt
+    return MethodResult(
+        method_id=method_id,
+        label=label,
+        unsafe_score=unsafe_score,
+        confidence=confidence,
+        evidence=[f"{provider_kind} predicted {output.label} with confidence {confidence:.3f}"],
+        metadata=metadata,
+    )
+
+
 def coerce_terms(value: Any) -> list[str]:
     if value is None:
         return []
@@ -211,4 +271,3 @@ def coerce_terms(value: Any) -> list[str]:
                 terms.append(str(item["term"]))
         return terms
     raise TypeError(f"dictionary terms must be a list, got {type(value).__name__}")
-

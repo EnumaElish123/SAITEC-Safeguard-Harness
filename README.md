@@ -42,7 +42,8 @@ outputs/runs/demo/
 ```text
 src/safeguard_harness/
   core.py           # SafetyCase, MethodResult, Decision, RunTrace
-  methods.py        # 四类 judge method 和 mock provider
+  providers.py      # prompt 0/1 API、分类头 API、本地模型路径和 mock provider
+  methods.py        # judge method，以及 provider 输出到 MethodResult 的映射
   orchestration.py  # static runner, ReAct runner, loop control, aggregation
   config.py         # YAML config -> pipeline/method construction
   datasets.py       # JSONL dataset IO
@@ -55,6 +56,7 @@ configs/
   providers/        # provider config examples
 dictionaries/       # high-risk/review-risk empty schemas
 data/examples/      # runnable sample JSONL
+models/             # local model files, ignored by Git except README
 tests/              # behavior tests
 ```
 
@@ -133,9 +135,66 @@ loop:
 
 部署场景建议优先使用 static runner，因为它可复现、可限制、可审计。ReAct runner 更适合实验分析。
 
-## 扩展真实模型
+## 模型接口和模型文件放置规则
 
-当前 `MockLlmProvider` 只是本地 dry run 适配器。接入真实模型时建议新增 provider 类，并让 `LlmSafetyJudgeMethod` / `RefusalProbeMethod` 依赖统一的 `complete(prompt: str) -> str` 接口。
+现在支持两类二分类模型接口：
+
+- `prompt_binary_model`：把 prompt 发给接口，接口直接返回 `0/1` 或 `safe/unsafe`。
+- `classifier_head_model`：把标准化 `SafetyCase` 发给分类头接口，接口返回 `0/1` 加 `confidence`。
+
+代码位置：
+
+```text
+src/safeguard_harness/providers.py  # 接口适配、返回解析、mock provider
+src/safeguard_harness/methods.py    # BinaryModelMethod，把 provider 输出转成 MethodResult
+src/safeguard_harness/config.py     # 从 YAML 加载 provider_config
+```
+
+配置位置：
+
+```text
+configs/providers/prompt_binary_api.yaml       # prompt -> 0/1 的真实 HTTP API 模板
+configs/providers/classifier_head_api.yaml     # 分类头 -> 0/1 + confidence 的真实 HTTP API 模板
+configs/providers/local_classifier_head.yaml   # 本地分类头模型路径模板
+configs/providers/mock_prompt_binary.yaml      # 本地 dry run mock
+configs/providers/mock_classifier_head.yaml    # 本地 dry run mock
+configs/pipelines/model_interfaces_v1.yaml     # 两类接口的可运行样例 pipeline
+```
+
+真实 API key 不进仓库，只写环境变量名：
+
+```yaml
+type: classifier_head_api
+base_url: "https://model-provider.example.com/safety/classifier-head"
+api_key_env: "SAFEGUARD_HEAD_API_KEY"
+timeout_seconds: 30
+```
+
+本地模型权重不要提交到 Git。开发机上可以放在仓库的 `models/` 目录，或更推荐放在外部模型目录，然后用环境变量引用：
+
+```powershell
+$env:SAFEGUARD_HEAD_MODEL_PATH="G:\Models\safeguard\classifier_head_v1"
+```
+
+`models/*` 默认被 `.gitignore` 忽略，只有 [models/README.md](G:/Workspace/Project2026/SAITEC-Safeguard-Harness/models/README.md) 会进入仓库。
+
+接口返回字段支持这些常见名称：
+
+```json
+{"label": 1, "confidence": 0.91}
+{"prediction": "unsafe", "score": 0.88}
+{"pred": 0, "probability": 0.76}
+```
+
+可以用以下命令验证 mock 接口 pipeline：
+
+```powershell
+python -m safeguard_harness judge --pipeline configs/pipelines/model_interfaces_v1.yaml --question "demo"
+```
+
+## 扩展生成式 LLM 模型
+
+当前 `MockLlmProvider` 是本地 dry run 适配器。接入生成式安全判别模型时建议新增 provider 类，并让 `LlmSafetyJudgeMethod` / `RefusalProbeMethod` 依赖统一的 `complete(prompt: str) -> str` 接口。
 
 推荐保持以下边界：
 

@@ -25,3 +25,4 @@
 ## 最新进度
 - 2026.06.12 12:01 完成了AGNETS.md的撰写。
 - 2026.06.12 12:45 完成安全 Harness 第一版框架实现：Python 包、四类 Method stub、static/ReAct runner、有界 loop、JSONL 评测、CLI、空词典 schema、样例配置与 README。
+- 2026.06.15 完成两类集成模型接口落点：prompt 二分类 API、分类头二分类 API、本地模型目录忽略规则、provider 配置模板、mock 接口样例 pipeline 与 README 说明。

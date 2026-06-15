@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from safeguard_harness.methods import (
+    BinaryModelMethod,
     DictionaryRuleMethod,
     LlmSafetyJudgeMethod,
     MockLlmProvider,
@@ -14,6 +15,7 @@ from safeguard_harness.methods import (
     coerce_terms,
 )
 from safeguard_harness.orchestration import ReactPipeline, StaticPipeline
+from safeguard_harness.providers import build_binary_provider, load_provider_config
 
 
 def load_pipeline(path: str | Path) -> StaticPipeline | ReactPipeline:
@@ -65,6 +67,21 @@ def build_method(method_id: str, config: dict[str, Any], base_dir: Path):
             method_id=method_id,
             unsafe_attachment_markers=list(config.get("unsafe_attachment_markers") or []),
         )
+    if method_type == "prompt_binary_model":
+        return BinaryModelMethod(
+            method_id=method_id,
+            provider=build_provider_for_method(config, base_dir),
+            provider_kind="prompt_binary",
+            prompt_template=load_prompt(config, base_dir),
+            default_confidence=float(config.get("default_confidence", 0.8)),
+        )
+    if method_type == "classifier_head_model":
+        return BinaryModelMethod(
+            method_id=method_id,
+            provider=build_provider_for_method(config, base_dir),
+            provider_kind="classifier_head",
+            default_confidence=float(config.get("default_confidence", 0.8)),
+        )
     raise ValueError(f"unknown method type for {method_id!r}: {method_type!r}")
 
 
@@ -104,6 +121,16 @@ def build_mock_provider(config: dict[str, Any]) -> MockLlmProvider:
     )
 
 
+def build_provider_for_method(config: dict[str, Any], base_dir: Path):
+    if "provider_config" in config:
+        provider_config = load_provider_config(resolve_path(config["provider_config"], base_dir))
+    else:
+        provider_config = dict(config.get("provider") or {})
+    if not provider_config:
+        raise ValueError("binary model methods require provider_config or provider")
+    return build_binary_provider(provider_config)
+
+
 def resolve_path(value: str | Path, base_dir: Path) -> Path:
     path = Path(value)
     if path.is_absolute():
@@ -115,4 +142,3 @@ def resolve_path(value: str | Path, base_dir: Path) -> Path:
     if cwd_candidate.exists():
         return cwd_candidate
     return base_candidate
-
