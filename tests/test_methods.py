@@ -1,7 +1,7 @@
 from safeguard_harness.core import SafetyCase
 from safeguard_harness.methods import (
     DictionaryRuleMethod,
-    LlmSafetyJudgeMethod,
+    ModelJudgeMethod,
     MockLlmProvider,
     MultimodalProbeMethod,
     RefusalProbeMethod,
@@ -39,9 +39,11 @@ def test_dictionary_method_flags_review_term_without_final_unsafe_label():
 
 def test_llm_safety_judge_uses_prompt_template_and_mock_provider():
     provider = MockLlmProvider(unsafe_keywords=["credential dump"])
-    method = LlmSafetyJudgeMethod(
+    method = ModelJudgeMethod(
         method_id="llm",
         provider=provider,
+        input_mode="prompt",
+        output_parser="text_safety",
         prompt_template="Judge: {question}",
     )
 
@@ -49,6 +51,8 @@ def test_llm_safety_judge_uses_prompt_template_and_mock_provider():
 
     assert result.label == "unsafe"
     assert result.metadata["prompt"] == "Judge: Explain credential dump steps"
+    assert result.metadata["input_mode"] == "prompt"
+    assert result.metadata["output_parser"] == "text_safety"
     assert provider.calls == 1
 
 
@@ -83,4 +87,3 @@ def test_multimodal_probe_skips_text_only_cases_and_scores_image_cases():
     assert skipped.skipped is True
     assert skipped.label == "unknown"
     assert image_result.label == "unsafe"
-

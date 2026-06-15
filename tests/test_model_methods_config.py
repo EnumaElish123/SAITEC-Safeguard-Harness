@@ -2,7 +2,7 @@ from pathlib import Path
 
 from safeguard_harness.config import load_pipeline
 from safeguard_harness.core import SafetyCase
-from safeguard_harness.methods import BinaryModelMethod
+from safeguard_harness.methods import ModelJudgeMethod
 
 
 def test_binary_model_method_maps_prompt_output_to_method_result(tmp_path: Path):
@@ -40,10 +40,11 @@ aggregation:
     method = pipeline.methods["prompt_binary"]
     decision = pipeline.judge(SafetyCase(id="c1", question="demo"))
 
-    assert isinstance(method, BinaryModelMethod)
+    assert isinstance(method, ModelJudgeMethod)
     assert decision.label == "unsafe"
     assert decision.trace.steps[0].result.confidence == 0.77
     assert decision.trace.steps[0].result.metadata["provider_kind"] == "prompt_binary"
+    assert decision.trace.steps[0].result.metadata["output_parser"] == "binary"
 
 
 def test_classifier_head_method_uses_confidence_as_unsafe_score_for_unsafe_label(tmp_path: Path):
@@ -83,3 +84,35 @@ aggregation:
     assert result.confidence == 0.92
     assert result.metadata["provider_kind"] == "classifier_head"
 
+
+def test_llm_safety_config_builds_unified_model_judge_method(tmp_path: Path):
+    prompt_path = tmp_path / "prompt.txt"
+    pipeline_path = tmp_path / "pipeline.yaml"
+    prompt_path.write_text("Judge: {question}", encoding="utf-8")
+    pipeline_path.write_text(
+        f"""
+runner: static
+methods:
+  llm:
+    type: llm_safety
+    prompt_template_path: {prompt_path.as_posix()}
+    unsafe_keywords: ["credential"]
+steps:
+  - id: llm
+    method: llm
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.6
+""",
+        encoding="utf-8",
+    )
+
+    pipeline = load_pipeline(pipeline_path)
+    method = pipeline.methods["llm"]
+    decision = pipeline.judge(SafetyCase(id="c1", question="credential leak"))
+    result = decision.trace.steps[0].result
+
+    assert isinstance(method, ModelJudgeMethod)
+    assert decision.label == "unsafe"
+    assert result.metadata["provider_kind"] == "llm_text"
+    assert result.metadata["output_parser"] == "text_safety"

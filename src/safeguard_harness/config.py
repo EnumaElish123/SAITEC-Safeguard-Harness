@@ -6,9 +6,8 @@ from typing import Any
 import yaml
 
 from safeguard_harness.methods import (
-    BinaryModelMethod,
     DictionaryRuleMethod,
-    LlmSafetyJudgeMethod,
+    ModelJudgeMethod,
     MockLlmProvider,
     MultimodalProbeMethod,
     RefusalProbeMethod,
@@ -50,9 +49,12 @@ def build_method(method_id: str, config: dict[str, Any], base_dir: Path):
             review_confidence=float(config.get("review_confidence", 0.55)),
         )
     if method_type == "llm_safety":
-        return LlmSafetyJudgeMethod(
+        return ModelJudgeMethod(
             method_id=method_id,
             provider=build_mock_provider(config),
+            input_mode="prompt",
+            output_parser="text_safety",
+            provider_kind="llm_text",
             prompt_template=load_prompt(config, base_dir),
         )
     if method_type == "refusal_probe":
@@ -68,17 +70,21 @@ def build_method(method_id: str, config: dict[str, Any], base_dir: Path):
             unsafe_attachment_markers=list(config.get("unsafe_attachment_markers") or []),
         )
     if method_type == "prompt_binary_model":
-        return BinaryModelMethod(
+        return ModelJudgeMethod(
             method_id=method_id,
             provider=build_provider_for_method(config, base_dir),
+            input_mode="prompt",
+            output_parser="binary",
             provider_kind="prompt_binary",
             prompt_template=load_prompt(config, base_dir),
             default_confidence=float(config.get("default_confidence", 0.8)),
         )
     if method_type == "classifier_head_model":
-        return BinaryModelMethod(
+        return ModelJudgeMethod(
             method_id=method_id,
             provider=build_provider_for_method(config, base_dir),
+            input_mode="case",
+            output_parser="binary",
             provider_kind="classifier_head",
             default_confidence=float(config.get("default_confidence", 0.8)),
         )

@@ -43,7 +43,7 @@ outputs/runs/demo/
 src/safeguard_harness/
   core.py           # SafetyCase, MethodResult, Decision, RunTrace
   providers.py      # prompt 0/1 API、分类头 API、本地模型路径和 mock provider
-  methods.py        # judge method，以及 provider 输出到 MethodResult 的映射
+  methods.py        # judge method；ModelJudgeMethod 统一封装所有模型判别
   orchestration.py  # static runner, ReAct runner, loop control, aggregation
   config.py         # YAML config -> pipeline/method construction
   datasets.py       # JSONL dataset IO
@@ -137,16 +137,19 @@ loop:
 
 ## 模型接口和模型文件放置规则
 
-现在支持两类二分类模型接口：
+模型判别统一由 `ModelJudgeMethod` 承载。当前 YAML 仍保留三个易读的 method type，加载后都会构造成同一个 `ModelJudgeMethod`：
 
+- `llm_safety`：生成式模型输出 `safe/unsafe` 文本，再解析成判别结果。
 - `prompt_binary_model`：把 prompt 发给接口，接口直接返回 `0/1` 或 `safe/unsafe`。
-- `classifier_head_model`：把标准化 `SafetyCase` 发给分类头接口，接口返回 `0/1` 加 `confidence`。
+- `classifier_head_model`：把标准化 `SafetyCase` 发给分类头接口，接口返回 `0/1`，可附带 `confidence`。
+
+换句话说，prompt 直出二分类、分类头、生成式安全判别现在都是“模型判别方法”的不同输入/解析配置，不再是互相独立的 Method 类。
 
 代码位置：
 
 ```text
 src/safeguard_harness/providers.py  # 接口适配、返回解析、mock provider
-src/safeguard_harness/methods.py    # BinaryModelMethod，把 provider 输出转成 MethodResult
+src/safeguard_harness/methods.py    # ModelJudgeMethod，把模型输出转成 MethodResult
 src/safeguard_harness/config.py     # 从 YAML 加载 provider_config
 ```
 
@@ -181,10 +184,13 @@ $env:SAFEGUARD_HEAD_MODEL_PATH="G:\Models\safeguard\classifier_head_v1"
 接口返回字段支持这些常见名称：
 
 ```json
+{"label": 1}
 {"label": 1, "confidence": 0.91}
 {"prediction": "unsafe", "score": 0.88}
 {"pred": 0, "probability": 0.76}
 ```
+
+如果接口只返回 `0/1` 而没有置信度，`ModelJudgeMethod` 会使用该 method 配置里的 `default_confidence`。
 
 可以用以下命令验证 mock 接口 pipeline：
 
@@ -194,7 +200,7 @@ python -m safeguard_harness judge --pipeline configs/pipelines/model_interfaces_
 
 ## 扩展生成式 LLM 模型
 
-当前 `MockLlmProvider` 是本地 dry run 适配器。接入生成式安全判别模型时建议新增 provider 类，并让 `LlmSafetyJudgeMethod` / `RefusalProbeMethod` 依赖统一的 `complete(prompt: str) -> str` 接口。
+当前 `MockLlmProvider` 是本地 dry run 适配器。接入生成式安全判别模型时建议新增 provider 类，并让 `ModelJudgeMethod` / `RefusalProbeMethod` 依赖统一的 `complete(prompt: str) -> str` 接口。
 
 推荐保持以下边界：
 

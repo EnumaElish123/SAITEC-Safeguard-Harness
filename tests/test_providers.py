@@ -13,11 +13,14 @@ from safeguard_harness.providers import (
 def test_binary_model_output_accepts_numeric_and_string_labels():
     unsafe = BinaryModelOutput.from_payload({"label": 1, "confidence": 0.91})
     safe = BinaryModelOutput.from_payload({"prediction": "safe", "score": 0.82})
+    label_only = BinaryModelOutput.from_payload({"label": 1})
 
     assert unsafe.label == 1
     assert unsafe.confidence == 0.91
     assert safe.label == 0
     assert safe.confidence == 0.82
+    assert label_only.label == 1
+    assert label_only.confidence is None
 
 
 def test_prompt_binary_api_provider_sends_prompt_and_parses_prediction(monkeypatch):
@@ -86,4 +89,3 @@ default_confidence: 0.64
 
     assert output.label == 1
     assert output.confidence == 0.64
-

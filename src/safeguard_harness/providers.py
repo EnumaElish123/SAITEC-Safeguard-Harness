@@ -39,7 +39,7 @@ class BinaryModelOutput:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "BinaryModelOutput":
         label_value = _first_present(payload, ["label", "prediction", "pred", "class", "output"])
-        confidence_value = _first_present(payload, ["confidence", "score", "probability", "prob"])
+        confidence_value = _first_optional(payload, ["confidence", "score", "probability", "prob"])
         return cls(
             label=parse_binary_label(label_value),
             confidence=None if confidence_value is None else float(confidence_value),
@@ -192,6 +192,13 @@ def _first_present(payload: dict[str, Any], keys: list[str]) -> Any:
         if key in payload:
             return payload[key]
     raise ValueError(f"payload missing any of required keys: {keys}")
+
+
+def _first_optional(payload: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
 
 
 def _clamp01(value: float) -> float:

@@ -91,28 +91,6 @@ class MockLlmProvider:
 
 
 @dataclass
-class LlmSafetyJudgeMethod(JudgeMethod):
-    method_id: str
-    provider: MockLlmProvider
-    prompt_template: str
-
-    def judge(self, case: SafetyCase, context: RunContext | None = None) -> MethodResult:
-        prompt = render_prompt(self.prompt_template, case)
-        response = self.provider.complete(prompt)
-        if context is not None:
-            context.count_llm_call()
-        label, score, confidence = parse_safety_response(response)
-        return MethodResult(
-            method_id=self.method_id,
-            label=label,
-            unsafe_score=score,
-            confidence=confidence,
-            evidence=[response],
-            metadata={"prompt": prompt, "response": response},
-        )
-
-
-@dataclass
 class RefusalProbeMethod(JudgeMethod):
     method_id: str
     provider: MockLlmProvider
@@ -180,34 +158,64 @@ class MultimodalProbeMethod(JudgeMethod):
 
 
 @dataclass
-class BinaryModelMethod(JudgeMethod):
+class ModelJudgeMethod(JudgeMethod):
     method_id: str
     provider: Any
-    provider_kind: str
+    input_mode: str
+    output_parser: str
+    provider_kind: str = "model"
     prompt_template: str | None = None
     default_confidence: float = 0.8
 
     def judge(self, case: SafetyCase, context: RunContext | None = None) -> MethodResult:
-        prompt: str | None = None
-        if self.provider_kind == "prompt_binary":
-            if self.prompt_template is None:
-                raise ValueError("prompt_binary methods require a prompt template")
-            prompt = render_prompt(self.prompt_template, case)
-            output = self.provider.classify_prompt(prompt)
+        if self.output_parser == "text_safety":
+            prompt = self._render_required_prompt(case)
+            response = self.provider.complete(prompt)
             if context is not None:
                 context.count_llm_call()
-        elif self.provider_kind == "classifier_head":
-            output = self.provider.classify_case(case)
-        else:
-            raise ValueError(f"unknown provider kind: {self.provider_kind!r}")
+            label, score, confidence = parse_safety_response(response)
+            return MethodResult(
+                method_id=self.method_id,
+                label=label,
+                unsafe_score=score,
+                confidence=confidence,
+                evidence=[response],
+                metadata={
+                    "prompt": prompt,
+                    "response": response,
+                    "input_mode": self.input_mode,
+                    "output_parser": self.output_parser,
+                    "provider_kind": self.provider_kind,
+                },
+            )
 
-        return binary_output_to_method_result(
-            method_id=self.method_id,
-            provider_kind=self.provider_kind,
-            output=output,
-            default_confidence=self.default_confidence,
-            prompt=prompt,
-        )
+        if self.output_parser == "binary":
+            prompt: str | None = None
+            if self.input_mode == "prompt":
+                prompt = self._render_required_prompt(case)
+                output = self.provider.classify_prompt(prompt)
+                if context is not None:
+                    context.count_llm_call()
+            elif self.input_mode == "case":
+                output = self.provider.classify_case(case)
+            else:
+                raise ValueError(f"unknown model input mode: {self.input_mode!r}")
+            return binary_output_to_method_result(
+                method_id=self.method_id,
+                provider_kind=self.provider_kind,
+                output=output,
+                default_confidence=self.default_confidence,
+                prompt=prompt,
+                input_mode=self.input_mode,
+                output_parser=self.output_parser,
+            )
+
+        raise ValueError(f"unknown model output parser: {self.output_parser!r}")
+
+    def _render_required_prompt(self, case: SafetyCase) -> str:
+        if self.prompt_template is None:
+            raise ValueError(f"{self.input_mode} model methods require a prompt template")
+        return render_prompt(self.prompt_template, case)
 
 
 def render_prompt(template: str, case: SafetyCase) -> str:
@@ -238,12 +246,16 @@ def binary_output_to_method_result(
     output: BinaryModelOutput,
     default_confidence: float,
     prompt: str | None = None,
+    input_mode: str = "",
+    output_parser: str = "binary",
 ) -> MethodResult:
     confidence = output.confidence if output.confidence is not None else default_confidence
     label = UNSAFE if output.label == 1 else SAFE
     unsafe_score = confidence if output.label == 1 else 1.0 - confidence
     metadata = {
         "provider_kind": provider_kind,
+        "input_mode": input_mode,
+        "output_parser": output_parser,
         "binary_label": output.label,
         "raw": output.raw,
     }
