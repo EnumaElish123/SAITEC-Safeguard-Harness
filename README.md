@@ -44,8 +44,7 @@ outputs/runs/demo/
 当前支持的常用 method type：
 
 - `dictionary`：规则词库判别。
-- `llm_safety`：生成式安全模型，输出 `safe/unsafe` 文本。
-- `prompt_binary_model`：prompt 输入，接口直接返回 `0/1` 或 `safe/unsafe`。
+- `prompt_binary_model`：prompt 输入的安全二分类模型；生成式 LLM、prompt 直出 `0/1` 或 `safe/unsafe` 的接口都归到这里。
 - `classifier_head_model`：标准化 case 输入，分类头返回 `0/1`，可带 `confidence`。
 - `refusal_probe`：把问题包装后送入安全对齐模型，用拒答信号辅助判断。
 - `multimodal_probe`：针对图片等多模态输入的探针入口。
@@ -66,6 +65,8 @@ steps:
 ```
 
 真实服务地址、鉴权环境变量、超时时间写在 `configs/providers/*.yaml`；prompt 写在 `configs/prompts/*.txt`；词典写在 `dictionaries/*.yaml`。如果只是换 prompt、阈值、词典或 provider 配置，新增一个 method id 即可。只有接入全新的算法形态时，才需要在 `src/safeguard_harness/methods.py` 中实现新 method，并在 `src/safeguard_harness/config.py` 中注册 YAML 加载逻辑。
+
+历史配置里的 `llm_safety` 仍可兼容加载，但新配置统一写 `prompt_binary_model`。同一个 provider 配不同 prompt 时，应写成不同 method id，例如 `safety_prompt_v1`、`safety_prompt_v2`。
 
 ## Quick Start: Train
 
@@ -202,13 +203,12 @@ loop:
 
 ## 模型接口和模型文件放置规则
 
-模型判别统一由 `ModelJudgeMethod` 承载。当前 YAML 仍保留三个易读的 method type，加载后都会构造成同一个 `ModelJudgeMethod`：
+模型判别统一由 `ModelJudgeMethod` 承载。当前 YAML 推荐只保留两类模型 method type：
 
-- `llm_safety`：生成式模型输出 `safe/unsafe` 文本，再解析成判别结果。
-- `prompt_binary_model`：把 prompt 发给接口，接口直接返回 `0/1` 或 `safe/unsafe`。
+- `prompt_binary_model`：把 prompt 发给模型接口，接口返回 `0/1` 或 `safe/unsafe`。不同 prompt 模板就是不同 method 实例。
 - `classifier_head_model`：把标准化 `SafetyCase` 发给分类头接口，接口返回 `0/1`，可附带 `confidence`。
 
-换句话说，prompt 直出二分类、分类头、生成式安全判别现在都是“模型判别方法”的不同输入/解析配置，不再是互相独立的 Method 类。
+换句话说，prompt 直出二分类和生成式安全判别现在合并为 `prompt_binary_model`；分类头仍是 `classifier_head_model`。旧的 `llm_safety` 只是兼容别名，不建议在新 pipeline 中继续使用。
 
 代码位置：
 
@@ -263,9 +263,9 @@ $env:SAFEGUARD_HEAD_MODEL_PATH="G:\Models\safeguard\classifier_head_v1"
 python -m safeguard_harness judge --pipeline configs/pipelines/model_interfaces_v1.yaml --question "demo"
 ```
 
-## 扩展生成式 LLM 模型
+## 扩展 prompt 二分类模型
 
-当前 `MockLlmProvider` 是本地 dry run 适配器。接入生成式安全判别模型时建议新增 provider 类，并让 `ModelJudgeMethod` / `RefusalProbeMethod` 依赖统一的 `complete(prompt: str) -> str` 接口。
+当前 `MockPromptBinaryProvider` 是本地 dry run 适配器。接入生成式安全判别模型时，建议在 provider 层把模型输出解析为统一的二分类结果：`label=0/1`，可选 `confidence`，并把原始响应放入 `raw`。这样无论底层是生成式 LLM 还是 prompt 直出二分类接口，pipeline 里都只表现为 `prompt_binary_model`。
 
 推荐保持以下边界：
 

@@ -102,8 +102,36 @@ class ClassifierHeadApiProvider:
 class MockPromptBinaryProvider:
     default_label: int = 0
     default_confidence: float | None = 0.8
+    unsafe_keywords: list[str] = field(default_factory=list)
+    safe_keywords: list[str] = field(default_factory=list)
+    refuse_keywords: list[str] = field(default_factory=list)
 
     def classify_prompt(self, prompt: str) -> BinaryModelOutput:
+        lowered = prompt.casefold()
+        unsafe_match = _first_keyword_match(lowered, self.unsafe_keywords + self.refuse_keywords)
+        if unsafe_match is not None:
+            return BinaryModelOutput(
+                label=1,
+                confidence=self.default_confidence,
+                raw={
+                    "provider": "mock_prompt_binary_keywords",
+                    "prompt": prompt,
+                    "matched_keyword": unsafe_match,
+                },
+            )
+
+        safe_match = _first_keyword_match(lowered, self.safe_keywords)
+        if safe_match is not None:
+            return BinaryModelOutput(
+                label=0,
+                confidence=self.default_confidence,
+                raw={
+                    "provider": "mock_prompt_binary_keywords",
+                    "prompt": prompt,
+                    "matched_keyword": safe_match,
+                },
+            )
+
         return BinaryModelOutput(
             label=parse_binary_label(self.default_label),
             confidence=self.default_confidence,
@@ -161,6 +189,9 @@ def build_binary_provider(config: dict[str, Any]) -> Any:
         return MockPromptBinaryProvider(
             default_label=parse_binary_label(config.get("default_label", 0)),
             default_confidence=config.get("default_confidence", 0.8),
+            unsafe_keywords=list(config.get("unsafe_keywords") or []),
+            safe_keywords=list(config.get("safe_keywords") or []),
+            refuse_keywords=list(config.get("refuse_keywords") or []),
         )
     if provider_type == "mock_classifier_head":
         return MockClassifierHeadProvider(
@@ -203,6 +234,13 @@ def _first_optional(payload: dict[str, Any], keys: list[str]) -> Any:
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+def _first_keyword_match(lowered_text: str, keywords: list[str]) -> str | None:
+    for keyword in keywords:
+        if keyword.casefold() in lowered_text:
+            return keyword
+    return None
 
 
 def _http_json_transport(request: dict[str, Any]) -> dict[str, Any]:

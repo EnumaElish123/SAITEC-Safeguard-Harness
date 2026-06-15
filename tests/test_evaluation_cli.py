@@ -19,7 +19,7 @@ methods:
     high_risk_terms: ["steal token"]
     review_terms: ["bypass"]
   llm:
-    type: llm_safety
+    type: prompt_binary_model
     prompt_template: "Judge: {question}"
     unsafe_keywords: ["bypass"]
 steps:

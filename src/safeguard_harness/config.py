@@ -14,7 +14,7 @@ from safeguard_harness.methods import (
     coerce_terms,
 )
 from safeguard_harness.orchestration import ReactPipeline, StaticPipeline
-from safeguard_harness.providers import build_binary_provider, load_provider_config
+from safeguard_harness.providers import MockPromptBinaryProvider, build_binary_provider, load_provider_config
 
 
 def load_pipeline(path: str | Path) -> StaticPipeline | ReactPipeline:
@@ -48,15 +48,6 @@ def build_method(method_id: str, config: dict[str, Any], base_dir: Path):
             high_confidence=float(config.get("high_confidence", 0.98)),
             review_confidence=float(config.get("review_confidence", 0.55)),
         )
-    if method_type == "llm_safety":
-        return ModelJudgeMethod(
-            method_id=method_id,
-            provider=build_mock_provider(config),
-            input_mode="prompt",
-            output_parser="text_safety",
-            provider_kind="llm_text",
-            prompt_template=load_prompt(config, base_dir),
-        )
     if method_type == "refusal_probe":
         return RefusalProbeMethod(
             method_id=method_id,
@@ -69,16 +60,8 @@ def build_method(method_id: str, config: dict[str, Any], base_dir: Path):
             method_id=method_id,
             unsafe_attachment_markers=list(config.get("unsafe_attachment_markers") or []),
         )
-    if method_type == "prompt_binary_model":
-        return ModelJudgeMethod(
-            method_id=method_id,
-            provider=build_provider_for_method(config, base_dir),
-            input_mode="prompt",
-            output_parser="binary",
-            provider_kind="prompt_binary",
-            prompt_template=load_prompt(config, base_dir),
-            default_confidence=float(config.get("default_confidence", 0.8)),
-        )
+    if method_type in {"prompt_binary_model", "llm_safety"}:
+        return build_prompt_binary_method(method_id, config, base_dir)
     if method_type == "classifier_head_model":
         return ModelJudgeMethod(
             method_id=method_id,
@@ -124,6 +107,30 @@ def build_mock_provider(config: dict[str, Any]) -> MockLlmProvider:
         unsafe_keywords=list(merged.get("unsafe_keywords") or []),
         safe_keywords=list(merged.get("safe_keywords") or []),
         refuse_keywords=list(merged.get("refuse_keywords") or []),
+    )
+
+
+def build_prompt_binary_method(method_id: str, config: dict[str, Any], base_dir: Path) -> ModelJudgeMethod:
+    return ModelJudgeMethod(
+        method_id=method_id,
+        provider=build_prompt_binary_provider_for_method(config, base_dir),
+        input_mode="prompt",
+        output_parser="binary",
+        provider_kind="prompt_binary",
+        prompt_template=load_prompt(config, base_dir),
+        default_confidence=float(config.get("default_confidence", 0.8)),
+    )
+
+
+def build_prompt_binary_provider_for_method(config: dict[str, Any], base_dir: Path):
+    if "provider_config" in config or "provider" in config:
+        return build_provider_for_method(config, base_dir)
+    return MockPromptBinaryProvider(
+        default_label=0,
+        default_confidence=float(config.get("default_confidence", 0.8)),
+        unsafe_keywords=list(config.get("unsafe_keywords") or []),
+        safe_keywords=list(config.get("safe_keywords") or []),
+        refuse_keywords=list(config.get("refuse_keywords") or []),
     )
 
 

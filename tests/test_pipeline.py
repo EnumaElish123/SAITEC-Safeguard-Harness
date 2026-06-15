@@ -15,7 +15,7 @@ methods:
     high_risk_terms: ["steal token"]
     review_terms: []
   llm:
-    type: llm_safety
+    type: prompt_binary_model
     prompt_template: "Judge: {question}"
     unsafe_keywords: ["never reached"]
 steps:
@@ -50,12 +50,12 @@ methods:
     high_risk_terms: []
     review_terms: ["bypass"]
   llm_v1:
-    type: llm_safety
+    type: prompt_binary_model
     prompt_template: "Judge v1: {question}"
     unsafe_keywords: []
     safe_keywords: ["bypass"]
   llm_v2:
-    type: llm_safety
+    type: prompt_binary_model
     prompt_template: "Judge v2: {question}"
     unsafe_keywords: ["bypass"]
 steps:
@@ -95,7 +95,7 @@ methods:
     high_risk_terms: []
     review_terms: ["suspicious"]
   llm:
-    type: llm_safety
+    type: prompt_binary_model
     prompt_template: "Judge: {question}"
     unsafe_keywords: ["suspicious"]
 loop:
@@ -117,4 +117,3 @@ aggregation:
     assert len(decision.trace.steps) == 1
     assert decision.trace.stop_reason == "budget_exhausted"
     assert decision.label == "safe"
-

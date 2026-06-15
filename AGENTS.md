@@ -28,3 +28,4 @@
 - 2026.06.15 完成两类集成模型接口落点：prompt 二分类 API、分类头二分类 API、本地模型目录忽略规则、provider 配置模板、mock 接口样例 pipeline 与 README 说明。
 - 2026.06.15 重构模型判别方法：`llm_safety`、`prompt_binary_model`、`classifier_head_model` 统一映射到 `ModelJudgeMethod`，并支持纯 0/1 接口使用 `default_confidence`。
 - 2026.06.15 补充 README 使用入口说明：method 接入方式、验证集手动迭代流程、固定 pipeline 推理流程。
+- 2026.06.15 合并 `llm_safety` 与 `prompt_binary_model` 语义：新 pipeline 统一使用 `prompt_binary_model`，不同 prompt 模板实例化为不同 method id，旧 `llm_safety` 仅保留兼容加载。

@@ -16,7 +16,7 @@ methods:
       - credential
 
   safety_llm_prompt_v1:
-    type: llm_safety
+    type: prompt_binary_model
     prompt_template_path: ../prompts/safety_prompt_v1.txt
     unsafe_keywords:
       - steal token
@@ -50,4 +50,3 @@ steps:
 aggregation:
   strategy: weighted_vote
   unsafe_threshold: 0.60
-

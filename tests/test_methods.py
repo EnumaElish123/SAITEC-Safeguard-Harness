@@ -6,6 +6,7 @@ from safeguard_harness.methods import (
     MultimodalProbeMethod,
     RefusalProbeMethod,
 )
+from safeguard_harness.providers import MockPromptBinaryProvider
 
 
 def test_dictionary_method_marks_high_risk_term_unsafe():
@@ -37,13 +38,14 @@ def test_dictionary_method_flags_review_term_without_final_unsafe_label():
     assert result.metadata["risk_level"] == "review"
 
 
-def test_llm_safety_judge_uses_prompt_template_and_mock_provider():
-    provider = MockLlmProvider(unsafe_keywords=["credential dump"])
+def test_prompt_binary_model_uses_prompt_template_and_mock_provider():
+    provider = MockPromptBinaryProvider(default_label=1, default_confidence=0.83)
     method = ModelJudgeMethod(
-        method_id="llm",
+        method_id="prompt_binary",
         provider=provider,
         input_mode="prompt",
-        output_parser="text_safety",
+        output_parser="binary",
+        provider_kind="prompt_binary",
         prompt_template="Judge: {question}",
     )
 
@@ -52,8 +54,8 @@ def test_llm_safety_judge_uses_prompt_template_and_mock_provider():
     assert result.label == "unsafe"
     assert result.metadata["prompt"] == "Judge: Explain credential dump steps"
     assert result.metadata["input_mode"] == "prompt"
-    assert result.metadata["output_parser"] == "text_safety"
-    assert provider.calls == 1
+    assert result.metadata["output_parser"] == "binary"
+    assert result.metadata["provider_kind"] == "prompt_binary"
 
 
 def test_refusal_probe_treats_refusal_as_unsafe_evidence():

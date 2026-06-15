@@ -85,7 +85,7 @@ aggregation:
     assert result.metadata["provider_kind"] == "classifier_head"
 
 
-def test_llm_safety_config_builds_unified_model_judge_method(tmp_path: Path):
+def test_llm_safety_config_is_prompt_binary_compatibility_alias(tmp_path: Path):
     prompt_path = tmp_path / "prompt.txt"
     pipeline_path = tmp_path / "pipeline.yaml"
     prompt_path.write_text("Judge: {question}", encoding="utf-8")
@@ -114,5 +114,57 @@ aggregation:
 
     assert isinstance(method, ModelJudgeMethod)
     assert decision.label == "unsafe"
-    assert result.metadata["provider_kind"] == "llm_text"
-    assert result.metadata["output_parser"] == "text_safety"
+    assert result.metadata["provider_kind"] == "prompt_binary"
+    assert result.metadata["output_parser"] == "binary"
+    assert result.metadata["raw"]["provider"] == "mock_prompt_binary_keywords"
+
+
+def test_prompt_binary_methods_with_different_prompts_are_distinct_instances(tmp_path: Path):
+    provider_path = tmp_path / "provider.yaml"
+    prompt_a_path = tmp_path / "prompt_a.txt"
+    prompt_b_path = tmp_path / "prompt_b.txt"
+    pipeline_path = tmp_path / "pipeline.yaml"
+    provider_path.write_text(
+        """
+type: mock_prompt_binary
+default_label: 0
+default_confidence: 0.70
+""",
+        encoding="utf-8",
+    )
+    prompt_a_path.write_text("Prompt A: {question}", encoding="utf-8")
+    prompt_b_path.write_text("Prompt B: {question}", encoding="utf-8")
+    pipeline_path.write_text(
+        f"""
+runner: static
+methods:
+  prompt_a:
+    type: prompt_binary_model
+    provider_config: {provider_path.as_posix()}
+    prompt_template_path: {prompt_a_path.as_posix()}
+  prompt_b:
+    type: prompt_binary_model
+    provider_config: {provider_path.as_posix()}
+    prompt_template_path: {prompt_b_path.as_posix()}
+steps:
+  - id: prompt_a
+    method: prompt_a
+  - id: prompt_b
+    method: prompt_b
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.6
+""",
+        encoding="utf-8",
+    )
+
+    pipeline = load_pipeline(pipeline_path)
+    decision = pipeline.judge(SafetyCase(id="c1", question="demo"))
+    first_result = decision.trace.steps[0].result
+    second_result = decision.trace.steps[1].result
+
+    assert pipeline.methods["prompt_a"] is not pipeline.methods["prompt_b"]
+    assert first_result.method_id == "prompt_a"
+    assert second_result.method_id == "prompt_b"
+    assert first_result.metadata["prompt"] == "Prompt A: demo"
+    assert second_result.metadata["prompt"] == "Prompt B: demo"
