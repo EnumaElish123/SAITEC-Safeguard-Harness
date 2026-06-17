@@ -29,3 +29,5 @@
 - 2026.06.15 重构模型判别方法：`llm_safety`、`prompt_binary_model`、`classifier_head_model` 统一映射到 `ModelJudgeMethod`，并支持纯 0/1 接口使用 `default_confidence`。
 - 2026.06.15 补充 README 使用入口说明：method 接入方式、验证集手动迭代流程、固定 pipeline 推理流程。
 - 2026.06.15 合并 `llm_safety` 与 `prompt_binary_model` 语义：新 pipeline 统一使用 `prompt_binary_model`，不同 prompt 模板实例化为不同 method id，旧 `llm_safety` 仅保留兼容加载。
+- 2026.06.17 将旧验证集 `safeguard_strategy2_plus_manage_r1_safety_only_shared_validation_zh80_llamafactory.json` 转换为 sample_eval 消息格式 JSONL，并保留 `safe` / `unsafe` 标签。
+- 2026.06.17 适配评估数据加载逻辑，支持 `messages` 格式 JSONL 自动转换为 `SafetyCase`，并验证 `validate_v1.jsonl` 可完整跑通评估。
