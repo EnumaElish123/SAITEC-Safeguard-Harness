@@ -1,4 +1,4 @@
-name: qwen3_6_27b_lora_qwen3guard_conflict_review_candidate_v101_output_review
+name: qwen3_6_27b_lora_qwen3guard_conflict_review_candidate_v102_weighted_rules_local_eval
 runner: static
 
 methods:
@@ -31,21 +31,21 @@ methods:
 
   qwen3_6_27b_lora_policy_binary_v7:
     type: prompt_binary_model
-    provider_config: ../providers/ascend_vllm_safeguard_prompt_binary.yaml
+    provider_config: ../providers/local_qwen3_6_27b_lora_sft_prompt_binary.yaml
     prompt_template_path: ../prompts/qwen_binary_output_policy_v1.txt
     default_confidence: 0.70
     input_view: answer_if_present
 
   qwen3_6_27b_lora_intent_binary_v7:
     type: prompt_binary_model
-    provider_config: ../providers/ascend_vllm_safeguard_prompt_binary.yaml
+    provider_config: ../providers/local_qwen3_6_27b_lora_sft_prompt_binary.yaml
     prompt_template_path: ../prompts/qwen_binary_output_intent_v1.txt
     default_confidence: 0.70
     input_view: answer_if_present
 
   qwen3guard_gen8b_refusal_probe_v1:
     type: refusal_probe
-    provider_config: ../providers/ascend_vllm_safeguard_generation_8001.yaml
+    provider_config: ../providers/local_qwen3guard_gen8b_refusal_probe_veto_safe.yaml
     prompt_template_path: ../prompts/qwen3guard_output_probe_v1.txt
     response_parser: binary_or_refusal
     unsafe_confidence: 0.95
@@ -55,18 +55,10 @@ methods:
 steps:
   - id: qwen3_6_vl_projection_probe_review_v1
     method: qwen3_6_vl_projection_probe_review_v1
-    on_unsafe: stop
-    on_safe: stop
   - id: structural_regex_boundary_v1
     method: structural_regex_boundary_v1
-    on_unsafe: stop
-    on_safe: stop
   - id: qwen3_6_27b_lora_high_precision_dictionary_v5
     method: qwen3_6_27b_lora_high_precision_dictionary_v5
-    on_unsafe: stop
-    on_safe: stop
-    on_safe_metadata:
-      risk_level: safe
   - id: qwen3_6_27b_lora_policy_binary_v7
     method: qwen3_6_27b_lora_policy_binary_v7
   - id: qwen3_6_27b_lora_intent_binary_v7

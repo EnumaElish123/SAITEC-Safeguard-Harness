@@ -510,7 +510,13 @@ class MergedSafeGuardProvider:
     device: str = "auto"
     torch_dtype: str = "bfloat16"
     max_new_tokens: int = 32
+    device_map: Any | None = None
+    max_memory: dict[Any, Any] | None = None
+    offload_folder: str | None = None
     cache_model: bool = True
+    disable_torch_compile: bool = False
+    patch_torch_distributed_tensor: bool = False
+    _runtime: Any = field(default=None, init=False, repr=False)
 
     def complete(self, prompt: str) -> str:
         from safeguard_harness.runtimes import merged_safeguard
@@ -522,16 +528,34 @@ class MergedSafeGuardProvider:
     def _get_runtime(self) -> Any:
         from safeguard_harness.runtimes import merged_safeguard
 
-        cache_key = (self.model_path, self.device, self.torch_dtype)
+        if self._runtime is not None:
+            return self._runtime
+        cache_key = (
+            self.model_path,
+            self.device,
+            self.torch_dtype,
+            _stable_config_key(self.device_map),
+            _stable_config_key(self.max_memory),
+            self.offload_folder,
+            self.disable_torch_compile,
+            self.patch_torch_distributed_tensor,
+        )
         if self.cache_model and cache_key in _MERGED_SAFEGUARD_RUNTIME_CACHE:
-            return _MERGED_SAFEGUARD_RUNTIME_CACHE[cache_key]
+            self._runtime = _MERGED_SAFEGUARD_RUNTIME_CACHE[cache_key]
+            return self._runtime
         runtime = merged_safeguard.load_merged_safeguard(
             model_path=self.model_path,
             device=self.device,
             torch_dtype=self.torch_dtype,
+            device_map=self.device_map,
+            max_memory=self.max_memory,
+            offload_folder=self.offload_folder,
+            disable_torch_compile=self.disable_torch_compile,
+            patch_torch_distributed_tensor=self.patch_torch_distributed_tensor,
         )
         if self.cache_model:
             _MERGED_SAFEGUARD_RUNTIME_CACHE[cache_key] = runtime
+        self._runtime = runtime
         return runtime
 
 
@@ -541,6 +565,9 @@ class Qwen3GuardProvider:
     max_new_tokens: int = 128
     controversial_label: str = "unsafe"
     use_refusal_as_unsafe: bool = False
+    device_map: Any | None = "auto"
+    max_memory: dict[Any, Any] | None = None
+    offload_folder: str | None = None
     cache_model: bool = True
 
     def complete(self, prompt: str) -> str:
@@ -580,10 +607,20 @@ class Qwen3GuardProvider:
     def _get_runtime(self) -> tuple[Any, Any]:
         from safeguard_harness.runtimes import qwen3guard
 
-        cache_key = (self.model_path,)
+        cache_key = (
+            self.model_path,
+            _stable_config_key(self.device_map),
+            _stable_config_key(self.max_memory),
+            self.offload_folder,
+        )
         if self.cache_model and cache_key in _QWEN3GUARD_RUNTIME_CACHE:
             return _QWEN3GUARD_RUNTIME_CACHE[cache_key]
-        tokenizer, model = qwen3guard.load_qwen3guard_gen8b_local(self.model_path)
+        tokenizer, model = qwen3guard.load_qwen3guard_gen8b_local(
+            self.model_path,
+            device_map=self.device_map,
+            max_memory=self.max_memory,
+            offload_folder=self.offload_folder,
+        )
         if self.cache_model:
             _QWEN3GUARD_RUNTIME_CACHE[cache_key] = (tokenizer, model)
         return tokenizer, model
@@ -932,8 +969,8 @@ _LOCAL_GENERATION_BACKEND_CACHE: dict[
     tuple[str, bool, str, str | None, str, str | None, bool | None, bool, bool],
     _TransformersBackend,
 ] = {}
-_MERGED_SAFEGUARD_RUNTIME_CACHE: dict[tuple[str, str, str], Any] = {}
-_QWEN3GUARD_RUNTIME_CACHE: dict[tuple[str], tuple[Any, Any]] = {}
+_MERGED_SAFEGUARD_RUNTIME_CACHE: dict[tuple[Any, ...], Any] = {}
+_QWEN3GUARD_RUNTIME_CACHE: dict[tuple[Any, ...], tuple[Any, Any]] = {}
 _ONE_CASE_MULTIMODAL_RUNTIME_CACHE: dict[tuple[str, str, str, int], _OneCaseMultimodalRuntime] = {}
 
 
@@ -1075,7 +1112,12 @@ def build_merged_safeguard_provider(config: dict[str, Any]) -> MergedSafeGuardPr
         device=str(config.get("device", "auto")),
         torch_dtype=str(config.get("torch_dtype", "bfloat16")),
         max_new_tokens=int(config.get("max_new_tokens", 32)),
+        device_map=config.get("device_map"),
+        max_memory=config.get("max_memory"),
+        offload_folder=resolve_provider_path(config["offload_folder"], config) if config.get("offload_folder") else None,
         cache_model=bool(config.get("cache_model", True)),
+        disable_torch_compile=bool(config.get("disable_torch_compile", False)),
+        patch_torch_distributed_tensor=bool(config.get("patch_torch_distributed_tensor", False)),
     )
 
 
@@ -1085,6 +1127,9 @@ def build_qwen3guard_provider(config: dict[str, Any]) -> Qwen3GuardProvider:
         max_new_tokens=int(config.get("max_new_tokens", 128)),
         controversial_label=str(config.get("controversial_label", "unsafe")),
         use_refusal_as_unsafe=bool(config.get("use_refusal_as_unsafe", False)),
+        device_map=config.get("device_map", "auto"),
+        max_memory=config.get("max_memory"),
+        offload_folder=resolve_provider_path(config["offload_folder"], config) if config.get("offload_folder") else None,
         cache_model=bool(config.get("cache_model", True)),
     )
 

@@ -22,7 +22,12 @@ class Qwen3GuardResult:
     refusal: str | None
 
 
-def load_qwen3guard_gen8b_local(model_path: str | Path) -> tuple[Any, Any]:
+def load_qwen3guard_gen8b_local(
+    model_path: str | Path,
+    device_map: Any | None = "auto",
+    max_memory: dict[Any, Any] | None = None,
+    offload_folder: str | None = None,
+) -> tuple[Any, Any]:
     patch_broken_triton_namespace()
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -33,11 +38,15 @@ def load_qwen3guard_gen8b_local(model_path: str | Path) -> tuple[Any, Any]:
 
     model_path = Path(model_path)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype="auto",
-        device_map="auto",
-    )
+    model_kwargs: dict[str, Any] = {"torch_dtype": "auto"}
+    if device_map is not None:
+        model_kwargs["device_map"] = device_map
+    if max_memory is not None:
+        model_kwargs["max_memory"] = max_memory
+    if offload_folder is not None:
+        Path(offload_folder).mkdir(parents=True, exist_ok=True)
+        model_kwargs["offload_folder"] = offload_folder
+    model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     model.eval()
     return tokenizer, model
 
@@ -68,7 +77,7 @@ def infer_qwen3guard_local(
 ) -> Qwen3GuardResult:
     torch = import_torch()
     prompt_text = tokenizer.apply_chat_template(messages, tokenize=False)
-    model_inputs = tokenizer([prompt_text], return_tensors="pt").to(model.device)
+    model_inputs = tokenizer([prompt_text], return_tensors="pt").to(_model_input_device(model))
     with torch.inference_mode():
         generated_ids = model.generate(
             **model_inputs,
@@ -88,6 +97,37 @@ def infer_qwen3guard_local(
         categories=categories,
         refusal=refusal,
     )
+
+
+def _model_input_device(model: Any) -> str:
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if isinstance(hf_device_map, dict):
+        for device in hf_device_map.values():
+            normalized = _normalize_device_name(device)
+            if normalized not in {"cpu", "disk", "meta"}:
+                return normalized
+        for device in hf_device_map.values():
+            normalized = _normalize_device_name(device)
+            if normalized not in {"disk", "meta"}:
+                return normalized
+    model_device = getattr(model, "device", None)
+    if model_device is not None:
+        normalized = str(model_device)
+        if normalized not in {"meta", "disk"}:
+            return normalized
+    try:
+        return str(next(model.parameters()).device)
+    except (AttributeError, StopIteration):
+        return "cpu"
+
+
+def _normalize_device_name(device: Any) -> str:
+    if isinstance(device, int):
+        return f"cuda:{device}"
+    normalized = str(device)
+    if normalized.isdigit():
+        return f"cuda:{normalized}"
+    return normalized
 
 
 def infer_prompt_safety_local(
@@ -120,4 +160,3 @@ def infer_response_safety_local(
         model=model,
         max_new_tokens=max_new_tokens,
     )
-

@@ -4,4 +4,5 @@ model_path: /ai/dataset/workspace/czy/model/Qwen3Guard-Gen-8B
 max_new_tokens: 128
 controversial_label: safe
 use_refusal_as_unsafe: false
+device_map: auto
 cache_model: true

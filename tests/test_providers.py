@@ -215,6 +215,29 @@ def test_project_owned_runtime_providers_default_to_auto_device():
     assert image_provider.device == "auto"
 
 
+def test_project_owned_runtime_provider_configs_use_auto_without_hardcoded_memory_controls():
+    binary_config = load_provider_config(Path("configs/providers/local_qwen3_6_27b_lora_sft_prompt_binary.yaml"))
+    binary_provider = build_binary_provider(binary_config)
+    generator = binary_provider.generator
+
+    assert "max_memory" not in binary_config
+    assert "offload_folder" not in binary_config
+    assert isinstance(generator, MergedSafeGuardProvider)
+    assert generator.device_map == "auto"
+    assert generator.max_memory is None
+    assert generator.offload_folder is None
+
+    guard_config = load_provider_config(Path("configs/providers/local_qwen3guard_gen8b_refusal_probe_veto_safe.yaml"))
+    guard_provider = build_text_generation_provider(guard_config)
+
+    assert "max_memory" not in guard_config
+    assert "offload_folder" not in guard_config
+    assert isinstance(guard_provider, Qwen3GuardProvider)
+    assert guard_provider.device_map == "auto"
+    assert guard_provider.max_memory is None
+    assert guard_provider.offload_folder is None
+
+
 def test_build_mock_multimodal_provider_scores_case_attachments():
     provider = build_multimodal_provider(
         {
