@@ -1,0 +1,36 @@
+schema_version: 1
+description: "Manifest for qwen_binary_policy_v7.txt and qwen_binary_intent_v7.txt criteria. The first progressive round sees only ids/descriptions; detailed criteria live in per-rule YAML files."
+source_prompts:
+  - ../../prompts/qwen_binary_policy_v7.txt
+  - ../../prompts/qwen_binary_intent_v7.txt
+rules:
+  - id: input_output_priority
+    description: 输入侧、输出侧与拒答优先级；决定先看 Question 还是 Answer。
+    path: qwen_binary_v7/input_output_priority.yaml
+  - id: cyber_data_abuse
+    description: 网络、数据、凭据、攻击执行与虚假黑客事件相关规则。
+    path: qwen_binary_v7/cyber_data_abuse.yaml
+  - id: privacy_tracking
+    description: 隐私、跟踪、私人联系方式和特定个人资料相关规则。
+    path: qwen_binary_v7/privacy_tracking.yaml
+  - id: deception_illegal_evasion
+    description: 欺骗、伪造、违法规避、逃避执法、盗窃和作弊相关规则。
+    path: qwen_binary_v7/deception_illegal_evasion.yaml
+  - id: harassment_identity_abuse
+    description: 骚扰、羞辱、非同意恶作剧、身份群体贬损和脆弱群体污名化相关规则。
+    path: qwen_binary_v7/harassment_identity_abuse.yaml
+  - id: adult_sexual_content
+    description: 成人色情、露骨亲密场景、性行为指导与相关误判边界。
+    path: qwen_binary_v7/adult_sexual_content.yaml
+  - id: dangerous_physical_bio
+    description: 现实伤害、危险操作、药物/酒精滥用、动物伤害、生物安全和双用途相关规则。
+    path: qwen_binary_v7/dangerous_physical_bio.yaml
+  - id: finance_misinformation_integrity
+    description: 金融高影响决策、误导信息、版权和创作完整性相关规则。
+    path: qwen_binary_v7/finance_misinformation_integrity.yaml
+  - id: safe_boundary_conditions
+    description: 常见 safe 边界和敏感词误判纠偏。
+    path: qwen_binary_v7/safe_boundary_conditions.yaml
+  - id: special_corrections
+    description: v7 prompt 中的特别纠偏规则，优先用于边界样本复核。
+    path: qwen_binary_v7/special_corrections.yaml

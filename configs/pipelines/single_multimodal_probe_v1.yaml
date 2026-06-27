@@ -1,0 +1,16 @@
+name: single_multimodal_probe_v1
+runner: static
+
+methods:
+  qwen3_6_vl_base_prompt_binary_v1:
+    type: multimodal_probe
+    provider_config: ../providers/local_qwen3_6_vl_prompt_binary.yaml
+    default_confidence: 0.80
+
+steps:
+  - id: qwen3_6_vl_base_prompt_binary_v1
+    method: qwen3_6_vl_base_prompt_binary_v1
+
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.50

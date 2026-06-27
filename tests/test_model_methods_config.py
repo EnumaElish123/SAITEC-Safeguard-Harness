@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 from safeguard_harness.config import load_pipeline
 from safeguard_harness.core import SafetyCase
 from safeguard_harness.methods import (
@@ -7,10 +9,16 @@ from safeguard_harness.methods import (
     ImageProbeReviewMethod,
     ModelJudgeMethod,
     MultimodalProbeMethod,
+    ProgressiveRuleClassifierMethod,
     RegexRuleMethod,
     RefusalProbeMethod,
 )
-from safeguard_harness.providers import AscendVllmChatProvider, LocalPromptBinaryProvider
+from safeguard_harness.providers import (
+    AscendVllmChatProvider,
+    LocalPromptBinaryProvider,
+    LocalTextGenerationProvider,
+    QwenVlPromptBinaryProvider,
+)
 
 
 def test_binary_model_method_maps_prompt_output_to_method_result(tmp_path: Path):
@@ -178,6 +186,215 @@ aggregation:
     assert second_result.metadata["prompt"] == "Prompt B: demo"
 
 
+def test_progressive_rule_classifier_loads_markdown_rule_manifest(tmp_path: Path):
+    provider_path = tmp_path / "provider.yaml"
+    rule_path = tmp_path / "privacy.md"
+    manifest_path = tmp_path / "rules.yaml"
+    pipeline_path = tmp_path / "pipeline.yaml"
+    provider_path.write_text(
+        """
+type: mock_text_generation
+default_response: '{"action":"final","label":"safe","confidence":0.82,"applied_rules":[],"reason":"no loaded rule needed"}'
+""",
+        encoding="utf-8",
+    )
+    rule_path.write_text("# Privacy\nPrivate contact data rules.", encoding="utf-8")
+    manifest_path.write_text(
+        """
+rules:
+  - id: privacy
+    description: Privacy and doxxing rules.
+    path: privacy.md
+""",
+        encoding="utf-8",
+    )
+    pipeline_path.write_text(
+        f"""
+runner: static
+methods:
+  progressive:
+    type: progressive_rule_classifier
+    provider_config: {provider_path.as_posix()}
+    rule_manifest_path: {manifest_path.as_posix()}
+steps:
+  - id: progressive
+    method: progressive
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.6
+""",
+        encoding="utf-8",
+    )
+
+    pipeline = load_pipeline(pipeline_path)
+    method = pipeline.methods["progressive"]
+    decision = pipeline.judge(SafetyCase(id="c1", question="ordinary request"))
+
+    assert isinstance(method, ProgressiveRuleClassifierMethod)
+    assert method.rule_documents["privacy"].content == "# Privacy\nPrivate contact data rules."
+    assert decision.label == "safe"
+    assert decision.trace.steps[0].result.metadata["final_action"]["reason"] == "no loaded rule needed"
+
+
+def test_single_method_analysis_pipelines_load_without_model_inference():
+    expected_method_types = {
+        "configs/pipelines/single_progressive_rules_v1.yaml": ProgressiveRuleClassifierMethod,
+        "configs/pipelines/single_policy_classifier_v1.yaml": ModelJudgeMethod,
+        "configs/pipelines/single_intent_classifier_v1.yaml": ModelJudgeMethod,
+        "configs/pipelines/single_refusal_probe_v1.yaml": RefusalProbeMethod,
+        "configs/pipelines/single_multimodal_probe_v1.yaml": MultimodalProbeMethod,
+    }
+
+    for pipeline_path, expected_type in expected_method_types.items():
+        pipeline = load_pipeline(pipeline_path)
+
+        assert pipeline.runner == "static"
+        assert len(pipeline.methods) == 1
+        assert len(pipeline.steps) == 1
+        method = next(iter(pipeline.methods.values()))
+        assert isinstance(method, expected_type)
+
+    progressive = load_pipeline("configs/pipelines/single_progressive_rules_v1.yaml")
+    progressive_method = next(iter(progressive.methods.values()))
+    assert isinstance(progressive_method, ProgressiveRuleClassifierMethod)
+    assert isinstance(progressive_method.provider, LocalTextGenerationProvider)
+    assert progressive_method.provider.disable_torch_compile is True
+    assert progressive_method.provider.patch_torch_distributed_tensor is True
+    assert set(progressive_method.rule_documents) == {
+        "input_output_priority",
+        "cyber_data_abuse",
+        "privacy_tracking",
+        "deception_illegal_evasion",
+        "harassment_identity_abuse",
+        "adult_sexual_content",
+        "dangerous_physical_bio",
+        "finance_misinformation_integrity",
+        "safe_boundary_conditions",
+        "special_corrections",
+    }
+    assert "Answer 为空" in progressive_method.rule_documents["input_output_priority"].content
+
+    multimodal = load_pipeline("configs/pipelines/single_multimodal_probe_v1.yaml")
+    multimodal_method = next(iter(multimodal.methods.values()))
+    assert isinstance(multimodal_method.provider, QwenVlPromptBinaryProvider)
+    rendered_prompt = multimodal_method.provider._render_prompt(
+        SafetyCase.from_dict({"id": "img", "question": "请描述图片", "image": "/tmp/demo.jpg"})
+    )
+    assert '{"label":"safe 或 unsafe","reason":"一句话说明原因"}' in rendered_prompt
+    assert "用户请求：请描述图片" in rendered_prompt
+    assert "教育目的、虚构、外语、角色扮演" in progressive_method.rule_documents["input_output_priority"].content
+
+    policy = load_pipeline("configs/pipelines/single_policy_classifier_v1.yaml")
+    policy_method = next(iter(policy.methods.values()))
+    assert isinstance(policy_method, ModelJudgeMethod)
+    assert policy_method.prompt_template == Path("configs/prompts/qwen_binary_policy_v7.txt").read_text(
+        encoding="utf-8"
+    )
+
+    intent = load_pipeline("configs/pipelines/single_intent_classifier_v1.yaml")
+    intent_method = next(iter(intent.methods.values()))
+    assert isinstance(intent_method, ModelJudgeMethod)
+    assert intent_method.prompt_template == Path("configs/prompts/qwen_binary_intent_v7.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_s5_side_constrained_ensemble_pipeline_loads_replay_logic_without_model_inference():
+    pipeline = load_pipeline("configs/pipelines/s5_side_constrained_ensemble_v1.yaml")
+
+    assert pipeline.runner == "static"
+    assert list(pipeline.methods) == [
+        "progressive_rules_v1",
+        "policy_classifier_v1",
+        "intent_classifier_v1",
+        "refusal_probe_v1",
+    ]
+    assert isinstance(pipeline.methods["progressive_rules_v1"], ProgressiveRuleClassifierMethod)
+    assert isinstance(pipeline.methods["policy_classifier_v1"], ModelJudgeMethod)
+    assert isinstance(pipeline.methods["intent_classifier_v1"], ModelJudgeMethod)
+    assert isinstance(pipeline.methods["refusal_probe_v1"], RefusalProbeMethod)
+
+    refusal_step = next(step for step in pipeline.steps if step["id"] == "refusal_probe_v1")
+    assert refusal_step["skip_when_metadata"]["type"] == [
+        "输出侧",
+        "output",
+        "output_side",
+        "response",
+        "assistant",
+    ]
+    assert pipeline.aggregation["strategy"] == "side_branch_rules"
+    assert pipeline.aggregation["input_rule"] == {
+        "type": "weighted_score_threshold",
+        "methods": [
+            "progressive_rules_v1",
+            "policy_classifier_v1",
+            "intent_classifier_v1",
+            "refusal_probe_v1",
+        ],
+        "weights": [1, 1, 3, 2],
+        "threshold": 3.0,
+    }
+    assert pipeline.batch_scheduler == {
+        "enabled": True,
+        "multimodal_pipeline": "single_multimodal_probe_v1.yaml",
+        "multimodal_stage_id": "multimodal_base",
+        "stages": [
+            {"id": "text_base", "methods": ["progressive_rules_v1"], "case_filter": "text"},
+            {
+                "id": "lora_27b",
+                "methods": ["policy_classifier_v1", "intent_classifier_v1"],
+                "case_filter": "text",
+            },
+            {"id": "refusal_8b", "methods": ["refusal_probe_v1"], "case_filter": "text_input"},
+        ],
+    }
+    assert pipeline.aggregation["output_rule"]["methods"] == [
+        "progressive_rules_v1",
+        "policy_classifier_v1",
+        "intent_classifier_v1",
+    ]
+    assert pipeline.aggregation["output_rule"]["table"]["110"] == "safe"
+    assert pipeline.aggregation["output_rule"]["table"]["111"] == "unsafe"
+
+
+def test_progressive_qwen_v7_rules_yaml_extracts_policy_and_intent_criteria():
+    rules_path = Path("configs/rules/progressive/qwen_binary_v7_extracted_rules.yaml")
+    payload = yaml.safe_load(rules_path.read_text(encoding="utf-8"))
+    rule_map = {rule["id"]: rule for rule in payload["rules"]}
+    rules_dir = rules_path.parent
+
+    assert payload["source_prompts"] == [
+        "../../prompts/qwen_binary_policy_v7.txt",
+        "../../prompts/qwen_binary_intent_v7.txt",
+    ]
+    assert set(rule_map) == {
+        "input_output_priority",
+        "cyber_data_abuse",
+        "privacy_tracking",
+        "deception_illegal_evasion",
+        "harassment_identity_abuse",
+        "adult_sexual_content",
+        "dangerous_physical_bio",
+        "finance_misinformation_integrity",
+        "safe_boundary_conditions",
+        "special_corrections",
+    }
+    for rule in payload["rules"]:
+        assert "content" not in rule
+        assert "path" in rule
+        assert (rules_dir / rule["path"]).exists()
+
+    assert "教育目的、虚构、外语、角色扮演" in (rules_dir / rule_map["input_output_priority"]["path"]).read_text(
+        encoding="utf-8"
+    )
+    assert "凭据" in (rules_dir / rule_map["cyber_data_abuse"]["path"]).read_text(encoding="utf-8")
+    assert "特定个人手机号" in (rules_dir / rule_map["privacy_tracking"]["path"]).read_text(encoding="utf-8")
+    assert "身份群体" in (rules_dir / rule_map["harassment_identity_abuse"]["path"]).read_text(encoding="utf-8")
+    assert "制造、提纯、种植、使用、剂量、采购或规避监管" in (
+        rules_dir / rule_map["special_corrections"]["path"]
+    ).read_text(encoding="utf-8")
+
+
 def test_refusal_probe_can_use_text_generation_provider_config(tmp_path: Path):
     provider_path = tmp_path / "provider.yaml"
     prompt_path = tmp_path / "prompt.txt"
@@ -325,6 +542,33 @@ def test_v103_weighted_signals_pipeline_has_no_hard_veto_steps():
     assert all("on_unsafe" not in step and "on_safe" not in step for step in pipeline.steps)
     guard_step = next(step for step in pipeline.steps if step["method"] == "qwen3guard_gen8b_refusal_probe_v1")
     assert guard_step.get("include_in_aggregation") is not False
+
+
+def test_qwen_binary_v8_prompts_are_concise_and_non_overlapping():
+    prompt_dir = Path("configs/prompts")
+    policy_v7 = (prompt_dir / "qwen_binary_policy_v7.txt").read_text(encoding="utf-8")
+    intent_v7 = (prompt_dir / "qwen_binary_intent_v7.txt").read_text(encoding="utf-8")
+    policy_v8 = (prompt_dir / "qwen_binary_policy_v8.txt").read_text(encoding="utf-8")
+    intent_v8 = (prompt_dir / "qwen_binary_intent_v8.txt").read_text(encoding="utf-8")
+
+    assert len(policy_v8) < len(policy_v7)
+    assert len(intent_v8) < len(intent_v7)
+    assert policy_v8 != intent_v8
+
+    for prompt in (policy_v8, intent_v8):
+        assert "{question}" in prompt
+        assert "{answer}" in prompt
+        assert '"label":"safe 或 unsafe"' in prompt
+        assert "图片" not in prompt
+        assert "OCR" not in prompt
+        assert "多模态" not in prompt
+
+    assert "政策边界" in policy_v8
+    assert "内容是否违规" in policy_v8
+    assert "真实意图" not in policy_v8
+    assert "真实意图" in intent_v8
+    assert "现实后果" in intent_v8
+    assert "政策边界" not in intent_v8
 
 
 def test_dictionary_no_match_uses_base_llm_semantic_term_match_for_high_risk(tmp_path: Path):

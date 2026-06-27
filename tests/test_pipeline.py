@@ -3,8 +3,29 @@ from pathlib import Path
 import pytest
 
 from safeguard_harness.config import load_pipeline
-from safeguard_harness.core import MethodResult, RunTrace, SafetyCase, TraceStep
-from safeguard_harness.orchestration import Pipeline
+from safeguard_harness.core import MethodResult, RunContext, RunTrace, SafetyCase, TraceStep
+from safeguard_harness.methods import JudgeMethod
+from safeguard_harness.orchestration import Pipeline, StaticPipeline
+
+
+class RecordingMethod(JudgeMethod):
+    def __init__(self, method_id: str, call_log: list[tuple[str, str]], *, unsafe_keywords: list[str] | None = None):
+        self.method_id = method_id
+        self.call_log = call_log
+        self.unsafe_keywords = unsafe_keywords or []
+
+    def judge(self, case: SafetyCase, context: RunContext | None = None) -> MethodResult:
+        if context is not None:
+            context.count_llm_call()
+        self.call_log.append((self.method_id, case.id))
+        is_unsafe = any(keyword in case.text_for_judging() for keyword in self.unsafe_keywords)
+        return MethodResult(
+            method_id=self.method_id,
+            label="unsafe" if is_unsafe else "safe",
+            unsafe_score=1.0 if is_unsafe else 0.0,
+            confidence=1.0,
+            evidence=[f"{self.method_id} saw {case.id}"],
+        )
 
 
 def test_static_pipeline_short_circuits_on_high_risk_rule(tmp_path: Path):
@@ -165,6 +186,140 @@ aggregation:
     prompts = [step.result.metadata["prompt"] for step in decision.trace.steps]
     assert "steal token answer" not in prompts[0]
     assert "weather answer" not in prompts[1]
+
+
+def test_resource_aware_batch_scheduler_groups_cases_by_model_stage_and_preserves_routes(tmp_path: Path):
+    multimodal_pipeline_path = tmp_path / "single_multimodal.yaml"
+    multimodal_pipeline_path.write_text(
+        """
+runner: static
+methods:
+  qwen3_6_vl_base_prompt_binary_v1:
+    type: multimodal_probe
+    provider:
+      type: mock_multimodal_probe
+      default_label: 1
+      default_confidence: 0.88
+steps:
+  - id: qwen3_6_vl_base_prompt_binary_v1
+    method: qwen3_6_vl_base_prompt_binary_v1
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.5
+""",
+        encoding="utf-8",
+    )
+    call_log: list[tuple[str, str]] = []
+    pipeline = StaticPipeline(
+        runner="static",
+        methods={
+            "progressive_rules_v1": RecordingMethod("progressive_rules_v1", call_log),
+            "policy_classifier_v1": RecordingMethod("policy_classifier_v1", call_log, unsafe_keywords=["policy_bad"]),
+            "intent_classifier_v1": RecordingMethod("intent_classifier_v1", call_log, unsafe_keywords=["intent_bad"]),
+            "refusal_probe_v1": RecordingMethod("refusal_probe_v1", call_log, unsafe_keywords=["refuse_bad"]),
+        },
+        steps=[
+            {"id": "progressive_rules_v1", "method": "progressive_rules_v1"},
+            {"id": "policy_classifier_v1", "method": "policy_classifier_v1"},
+            {"id": "intent_classifier_v1", "method": "intent_classifier_v1"},
+            {
+                "id": "refusal_probe_v1",
+                "method": "refusal_probe_v1",
+                "skip_when_metadata": {"type": ["输出侧", "output", "output_side", "response", "assistant"]},
+            },
+        ],
+        aggregation={
+            "strategy": "side_branch_rules",
+            "side_metadata_key": "type",
+            "output_values": ["输出侧", "output", "output_side", "response", "assistant"],
+            "input_rule": {
+                "type": "weighted_score_threshold",
+                "methods": [
+                    "progressive_rules_v1",
+                    "policy_classifier_v1",
+                    "intent_classifier_v1",
+                    "refusal_probe_v1",
+                ],
+                "weights": [1, 1, 3, 2],
+                "threshold": 3.0,
+            },
+            "output_rule": {
+                "type": "binary_truth_table",
+                "methods": ["progressive_rules_v1", "policy_classifier_v1", "intent_classifier_v1"],
+                "table": {
+                    "000": "safe",
+                    "001": "unsafe",
+                    "010": "unsafe",
+                    "011": "unsafe",
+                    "100": "unsafe",
+                    "101": "unsafe",
+                    "110": "safe",
+                    "111": "unsafe",
+                },
+            },
+        },
+        batch_scheduler={
+            "enabled": True,
+            "multimodal_pipeline": str(multimodal_pipeline_path),
+            "stages": [
+                {"id": "text_base", "methods": ["progressive_rules_v1"], "case_filter": "text"},
+                {
+                    "id": "lora_27b",
+                    "methods": ["policy_classifier_v1", "intent_classifier_v1"],
+                    "case_filter": "text",
+                },
+                {"id": "refusal_8b", "methods": ["refusal_probe_v1"], "case_filter": "text_input"},
+            ],
+        },
+    )
+    cases = [
+        SafetyCase(id="input_text", question="intent_bad refuse_bad", metadata={"type": "输入侧"}),
+        SafetyCase(
+            id="output_mt",
+            question="flattened question should not be used",
+            answer="flattened answer should not be used",
+            metadata={
+                "type": "输出侧",
+                "is_mt": 1,
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "first question"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "safe answer"}]},
+                    {"role": "user", "content": [{"type": "text", "text": "second question"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "policy_bad answer"}]},
+                ],
+            },
+        ),
+        SafetyCase.from_dict({"id": "image_case", "question": "describe image", "image": "/tmp/demo.png"}),
+    ]
+
+    decisions = list(pipeline.judge_many(cases, intermediate_dir=tmp_path / "tmp_results"))
+
+    assert [decision.case_id for decision in decisions] == ["input_text", "output_mt", "image_case"]
+    assert decisions[0].label == "unsafe"
+    assert decisions[1].label == "unsafe"
+    assert decisions[1].metadata["aggregation_strategy"] == "multi_turn_output_union"
+    assert decisions[1].metadata["pair_count"] == 2
+    assert decisions[2].label == "unsafe"
+    assert [step.method_id for step in decisions[2].trace.steps] == ["qwen3_6_vl_base_prompt_binary_v1"]
+    assert call_log == [
+        ("progressive_rules_v1", "input_text"),
+        ("progressive_rules_v1", "output_mt#mt1"),
+        ("progressive_rules_v1", "output_mt#mt2"),
+        ("policy_classifier_v1", "input_text"),
+        ("policy_classifier_v1", "output_mt#mt1"),
+        ("policy_classifier_v1", "output_mt#mt2"),
+        ("intent_classifier_v1", "input_text"),
+        ("intent_classifier_v1", "output_mt#mt1"),
+        ("intent_classifier_v1", "output_mt#mt2"),
+        ("refusal_probe_v1", "input_text"),
+    ]
+    stage_files = sorted((tmp_path / "tmp_results" / "stages").glob("*.jsonl"))
+    assert [path.name for path in stage_files] == [
+        "00_multimodal_base.jsonl",
+        "01_text_base.jsonl",
+        "02_lora_27b.jsonl",
+        "03_refusal_8b.jsonl",
+    ]
 
 
 def test_static_pipeline_keeps_multi_turn_input_side_as_one_case(tmp_path: Path):
@@ -534,6 +689,105 @@ def test_weighted_vote_uses_votes_instead_of_max_unsafe_score():
     assert weighted.unsafe_score == pytest.approx(1 / 3)
     assert max_score.label == "unsafe"
     assert max_score.unsafe_score == 0.7
+
+
+def test_side_branch_rules_skip_refusal_probe_on_output_side(tmp_path: Path):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """
+runner: static
+methods:
+  progressive_rules_v1:
+    type: prompt_binary_model
+    prompt_template: "progress: {question}"
+    unsafe_keywords: ["progress_unsafe"]
+    default_confidence: 1.0
+  policy_classifier_v1:
+    type: prompt_binary_model
+    prompt_template: "policy: {question}"
+    unsafe_keywords: ["policy_unsafe"]
+    default_confidence: 1.0
+  intent_classifier_v1:
+    type: prompt_binary_model
+    prompt_template: "intent: {question}"
+    unsafe_keywords: ["intent_unsafe"]
+    default_confidence: 1.0
+  refusal_probe_v1:
+    type: refusal_probe
+    prompt_template: "guard: {question}"
+    refuse_keywords: ["refusal_unsafe"]
+    unsafe_confidence: 1.0
+    safe_confidence: 1.0
+steps:
+  - id: progressive_rules_v1
+    method: progressive_rules_v1
+  - id: policy_classifier_v1
+    method: policy_classifier_v1
+  - id: intent_classifier_v1
+    method: intent_classifier_v1
+  - id: refusal_probe_v1
+    method: refusal_probe_v1
+    skip_when_metadata:
+      type: ["输出侧", "output", "output_side", "response", "assistant"]
+aggregation:
+  strategy: side_branch_rules
+  side_metadata_key: type
+  output_values: ["输出侧", "output", "output_side", "response", "assistant"]
+  input_rule:
+    type: weighted_score_threshold
+    methods: [progressive_rules_v1, policy_classifier_v1, intent_classifier_v1, refusal_probe_v1]
+    weights: [1, 1, 3, 2]
+    threshold: 3.0
+  output_rule:
+    type: binary_truth_table
+    methods: [progressive_rules_v1, policy_classifier_v1, intent_classifier_v1]
+    table:
+      "000": safe
+      "001": unsafe
+      "010": unsafe
+      "011": unsafe
+      "100": unsafe
+      "101": unsafe
+      "110": safe
+      "111": unsafe
+""",
+        encoding="utf-8",
+    )
+
+    pipeline = load_pipeline(pipeline_path)
+    input_decision = pipeline.judge(
+        SafetyCase(
+            id="input",
+            question="intent_unsafe refusal_unsafe",
+            metadata={"type": "输入侧"},
+        )
+    )
+    output_decision = pipeline.judge(
+        SafetyCase(
+            id="output",
+            question="progress_unsafe policy_unsafe refusal_unsafe",
+            metadata={"type": "输出侧"},
+        )
+    )
+
+    assert input_decision.label == "unsafe"
+    assert [step.method_id for step in input_decision.trace.steps] == [
+        "progressive_rules_v1",
+        "policy_classifier_v1",
+        "intent_classifier_v1",
+        "refusal_probe_v1",
+    ]
+    assert input_decision.metadata["side_branch"] == "input"
+    assert input_decision.metadata["raw_weighted_score"] == pytest.approx(4.8)
+
+    assert output_decision.label == "safe"
+    assert [step.method_id for step in output_decision.trace.steps] == [
+        "progressive_rules_v1",
+        "policy_classifier_v1",
+        "intent_classifier_v1",
+    ]
+    assert output_decision.metadata["side_branch"] == "output"
+    assert output_decision.metadata["truth_table_pattern"] == "110"
 
 
 def test_react_pipeline_respects_max_steps_and_allowed_actions(tmp_path: Path):

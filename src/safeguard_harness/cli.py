@@ -67,8 +67,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
     cases = load_jsonl_cases(args.input)
     rows = []
     deliverable_rows = []
-    for case in cases:
-        decision = pipeline.judge(case)
+    for case, decision in zip(cases, pipeline.judge_many(cases, intermediate_dir=_default_intermediate_dir(args.output))):
         rows.append({"case_id": case.id, **decision.to_dict()})
         deliverable_rows.append(deliverable_result_row(case, decision))
     write_jsonl(args.output, rows)
@@ -98,3 +97,9 @@ def _default_deliverable_path(output_path: str | Path) -> Path:
     suffix = output.suffix or ".jsonl"
     stem = output.stem if output.suffix else output.name
     return output.with_name(f"{stem}_deliverable{suffix}")
+
+
+def _default_intermediate_dir(output_path: str | Path) -> Path:
+    output = Path(output_path)
+    stem = output.stem if output.suffix else output.name
+    return output.with_name(f"{stem}_intermediate")

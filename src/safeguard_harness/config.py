@@ -13,6 +13,8 @@ from safeguard_harness.methods import (
     ModelJudgeMethod,
     MockLlmProvider,
     MultimodalProbeMethod,
+    ProgressiveRuleClassifierMethod,
+    ProgressiveRuleDocument,
     RegexRuleMethod,
     RefusalProbeMethod,
     coerce_terms,
@@ -41,9 +43,14 @@ def load_pipeline(path: str | Path) -> StaticPipeline | ReactPipeline:
         "methods": methods,
         "aggregation": raw_config.get("aggregation") or {},
         "raw_config": raw_config,
+        "config_path": config_path,
     }
     if runner == "static":
-        return StaticPipeline(steps=list(raw_config.get("steps") or []), **common)
+        return StaticPipeline(
+            steps=list(raw_config.get("steps") or []),
+            batch_scheduler=dict(raw_config.get("batch_scheduler") or {}),
+            **common,
+        )
     if runner == "react":
         return ReactPipeline(loop=dict(raw_config.get("loop") or {}), **common)
     raise ValueError(f"unknown runner {runner!r}")
@@ -108,6 +115,8 @@ def build_method(
             review_input_view=str(config.get("review_input_view", config.get("input_view", "full"))),
             skip_when_answer_present=bool(config.get("skip_when_answer_present", False)),
         )
+    if method_type == "progressive_rule_classifier":
+        return build_progressive_rule_classifier_method(method_id, config, base_dir)
     if method_type in {"prompt_binary_model", "llm_safety"}:
         return build_prompt_binary_method(method_id, config, base_dir)
     if method_type == "classifier_head_model":
@@ -210,6 +219,36 @@ def build_prompt_binary_method(method_id: str, config: dict[str, Any], base_dir:
     )
 
 
+def build_progressive_rule_classifier_method(
+    method_id: str,
+    config: dict[str, Any],
+    base_dir: Path,
+) -> ProgressiveRuleClassifierMethod:
+    return ProgressiveRuleClassifierMethod(
+        method_id=method_id,
+        provider=build_text_generation_provider_for_method(config, base_dir),
+        rule_documents=load_progressive_rule_documents(config, base_dir),
+        router_prompt_template=load_named_prompt(
+            config,
+            inline_keys=("router_prompt_template", "prompt_template"),
+            path_keys=("router_prompt_template_path", "prompt_template_path"),
+            base_dir=base_dir,
+        )
+        or ProgressiveRuleClassifierMethod.router_prompt_template,
+        followup_prompt_template=load_named_prompt(
+            config,
+            inline_keys=("followup_prompt_template", "judge_prompt_template"),
+            path_keys=("followup_prompt_template_path", "judge_prompt_template_path"),
+            base_dir=base_dir,
+        )
+        or ProgressiveRuleClassifierMethod.followup_prompt_template,
+        max_rule_rounds=int(config.get("max_rule_rounds", 2)),
+        max_rule_files=int(config.get("max_rule_files", 3)),
+        default_confidence=float(config.get("default_confidence", 0.7)),
+        input_view=str(config.get("input_view", "full")),
+    )
+
+
 def build_prompt_binary_provider_for_method(config: dict[str, Any], base_dir: Path):
     if "provider_config" in config or "provider" in config:
         return build_provider_for_method(config, base_dir)
@@ -238,7 +277,7 @@ def build_text_generation_provider_for_method(config: dict[str, Any], base_dir: 
     else:
         provider_config = dict(config.get("provider") or {})
     if not provider_config:
-        raise ValueError("refusal probe methods require provider_config or provider when not using inline mock keywords")
+        raise ValueError("text generation methods require provider_config or provider")
     return build_text_generation_provider(provider_config)
 
 
@@ -250,6 +289,62 @@ def build_multimodal_provider_for_method(config: dict[str, Any], base_dir: Path)
     if not provider_config:
         raise ValueError("multimodal probe methods require provider_config or provider")
     return build_multimodal_provider(provider_config)
+
+
+def load_named_prompt(
+    config: dict[str, Any],
+    *,
+    inline_keys: tuple[str, ...],
+    path_keys: tuple[str, ...],
+    base_dir: Path,
+) -> str | None:
+    for inline_key in inline_keys:
+        if inline_key in config:
+            return str(config[inline_key])
+    for path_key in path_keys:
+        if path_key in config:
+            return resolve_path(config[path_key], base_dir).read_text(encoding="utf-8")
+    return None
+
+
+def load_progressive_rule_documents(
+    config: dict[str, Any],
+    base_dir: Path,
+) -> dict[str, ProgressiveRuleDocument]:
+    entries: list[tuple[dict[str, Any], Path]] = []
+    for entry in config.get("rules") or config.get("rule_documents") or []:
+        if not isinstance(entry, dict):
+            raise ValueError("progressive rule entries must be mappings")
+        entries.append((dict(entry), base_dir))
+
+    if "rule_manifest_path" in config:
+        manifest_path = resolve_path(config["rule_manifest_path"], base_dir)
+        manifest = load_yaml(manifest_path)
+        manifest_entries = manifest.get("rules") or manifest.get("rule_documents") or []
+        if not isinstance(manifest_entries, list):
+            raise ValueError(f"rule_manifest_path must contain a rules list: {manifest_path}")
+        for entry in manifest_entries:
+            if not isinstance(entry, dict):
+                raise ValueError(f"progressive rule manifest entries must be mappings: {manifest_path}")
+            entries.append((dict(entry), manifest_path.parent))
+
+    documents: dict[str, ProgressiveRuleDocument] = {}
+    for entry, entry_base_dir in entries:
+        rule_id = str(entry.get("id") or entry.get("rule_id") or "").strip()
+        if not rule_id:
+            raise ValueError("progressive rule entries require id or rule_id")
+        content = entry.get("content")
+        path_value = entry.get("path") or entry.get("file") or entry.get("markdown_path")
+        if content is None and path_value:
+            content = resolve_path(path_value, entry_base_dir).read_text(encoding="utf-8")
+        if content is None:
+            raise ValueError(f"progressive rule {rule_id!r} requires content or path")
+        documents[rule_id] = ProgressiveRuleDocument(
+            rule_id=rule_id,
+            description=str(entry.get("description") or ""),
+            content=str(content),
+        )
+    return documents
 
 
 def build_base_llm_judge(config: Any, base_dir: Path) -> InternalLlmJudge | None:

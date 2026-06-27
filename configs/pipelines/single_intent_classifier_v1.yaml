@@ -1,0 +1,18 @@
+name: single_intent_classifier_v1
+runner: static
+
+methods:
+  qwen3_6_27b_lora_intent_v1:
+    type: prompt_binary_model
+    provider_config: ../providers/local_qwen3_6_27b_lora_sft_prompt_binary.yaml
+    prompt_template_path: ../prompts/qwen_binary_intent_v7.txt
+    default_confidence: 0.70
+    input_view: full
+
+steps:
+  - id: qwen3_6_27b_lora_intent_v1
+    method: qwen3_6_27b_lora_intent_v1
+
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.50

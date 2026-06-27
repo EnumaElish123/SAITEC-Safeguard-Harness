@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 import os
 import re
@@ -796,6 +797,92 @@ class QwenVlProjectionProbeProvider:
 
 
 @dataclass
+class QwenVlPromptBinaryProvider:
+    model_path: str
+    prompt_template: str
+    device: str = "auto"
+    max_new_tokens: int = 256
+    default_confidence: float | None = None
+    cache_model: bool = True
+    disable_torch_compile: bool = False
+    patch_torch_distributed_tensor: bool = False
+    runtime: Any | None = field(default=None, repr=False)
+
+    def classify_case(self, case: SafetyCase) -> BinaryModelOutput:
+        image_path = _first_image_attachment(case)
+        if image_path is None:
+            raise ValueError(f"Qwen VL prompt-binary case {case.id!r} has no image attachment")
+
+        prompt = self._render_prompt(case)
+        runtime = self._get_runtime()
+        responses = runtime.module.qwen_vl_batch_infer(
+            runtime.model,
+            runtime.processor,
+            [prompt],
+            [image_path],
+            max_new_tokens=self.max_new_tokens,
+        )
+        response = responses[0] if responses else ""
+        label = parse_binary_label_from_text(response)
+        return BinaryModelOutput(
+            label=label,
+            confidence=self.default_confidence,
+            raw={
+                "provider": "qwen_vl_prompt_binary",
+                "case_id": case.id,
+                "image_path": image_path,
+                "prompt": prompt,
+                "response": response,
+            },
+        )
+
+    def _render_prompt(self, case: SafetyCase) -> str:
+        return self.prompt_template.format(
+            id=case.id,
+            question=case.question,
+            answer=case.answer or "",
+            judging_text=case.question if not case.answer else f"Question: {case.question}\nAnswer: {case.answer}",
+            modality=case.modality,
+            attachments=", ".join(case.attachments),
+        )
+
+    def _get_runtime(self) -> "_QwenVlPromptBinaryRuntime":
+        if self.runtime is not None:
+            return self.runtime
+
+        cache_key = (self.model_path, self.device)
+        if self.cache_model and cache_key in _QWEN_VL_PROMPT_BINARY_RUNTIME_CACHE:
+            return _QWEN_VL_PROMPT_BINARY_RUNTIME_CACHE[cache_key]
+
+        from safeguard_harness.runtimes import qwen_vl_projection_probe
+
+        torch = _import_torch()
+        original_torch_compile = _apply_transformers_load_compat(
+            torch,
+            disable_torch_compile=self.disable_torch_compile,
+            patch_torch_distributed_tensor=self.patch_torch_distributed_tensor,
+        )
+        try:
+            model, processor, resolved_device = qwen_vl_projection_probe.load_model(
+                model_path=self.model_path,
+                device=self.device,
+            )
+        finally:
+            if original_torch_compile is not None:
+                torch.compile = original_torch_compile
+
+        runtime = _QwenVlPromptBinaryRuntime(
+            module=qwen_vl_projection_probe,
+            model=model,
+            processor=processor,
+            device=resolved_device,
+        )
+        if self.cache_model:
+            _QWEN_VL_PROMPT_BINARY_RUNTIME_CACHE[cache_key] = runtime
+        return runtime
+
+
+@dataclass
 class LocalClassifierHeadProvider:
     model_path: str
 
@@ -810,6 +897,7 @@ class LocalTextGenerationProvider:
     model_path: str
     max_new_tokens: int = 128
     trust_remote_code: bool = True
+    device: str = "auto"
     device_map: Any | None = "auto"
     torch_dtype: str | None = "auto"
     max_memory: dict[Any, Any] | None = None
@@ -863,6 +951,7 @@ class LocalTextGenerationProvider:
         backend = _load_transformers_backend(
             model_path=self.model_path,
             trust_remote_code=self.trust_remote_code,
+            device=self.device,
             device_map=self.device_map,
             torch_dtype=self.torch_dtype,
             max_memory=self.max_memory,
@@ -875,12 +964,13 @@ class LocalTextGenerationProvider:
         self._backend = backend
         return backend
 
-    def _cache_key(self) -> tuple[str, bool, str, str | None, str, str | None, bool | None, bool, bool]:
+    def _cache_key(self) -> tuple[str, bool, str, str, str | None, str, str | None, bool | None, bool, bool]:
         path = Path(self.model_path).expanduser()
         resolved_path = path.resolve().as_posix() if path.exists() else os.path.abspath(os.path.expandvars(str(path)))
         return (
             resolved_path,
             self.trust_remote_code,
+            self.device,
             _stable_config_key(self.device_map),
             self.torch_dtype,
             _stable_config_key(self.max_memory),
@@ -965,6 +1055,14 @@ class _OneCaseMultimodalRuntime:
     device: str
 
 
+@dataclass
+class _QwenVlPromptBinaryRuntime:
+    module: Any
+    model: Any
+    processor: Any
+    device: str
+
+
 _LOCAL_GENERATION_BACKEND_CACHE: dict[
     tuple[str, bool, str, str | None, str, str | None, bool | None, bool, bool],
     _TransformersBackend,
@@ -972,6 +1070,69 @@ _LOCAL_GENERATION_BACKEND_CACHE: dict[
 _MERGED_SAFEGUARD_RUNTIME_CACHE: dict[tuple[Any, ...], Any] = {}
 _QWEN3GUARD_RUNTIME_CACHE: dict[tuple[Any, ...], tuple[Any, Any]] = {}
 _ONE_CASE_MULTIMODAL_RUNTIME_CACHE: dict[tuple[str, str, str, int], _OneCaseMultimodalRuntime] = {}
+_QWEN_VL_PROMPT_BINARY_RUNTIME_CACHE: dict[tuple[str, str], _QwenVlPromptBinaryRuntime] = {}
+
+
+def release_cached_model_resources(*owners: Any) -> None:
+    """Drop local model/runtime references between resource-aware stages."""
+    seen: set[int] = set()
+    for owner in owners:
+        _release_object_resources(owner, seen)
+
+    _LOCAL_GENERATION_BACKEND_CACHE.clear()
+    _MERGED_SAFEGUARD_RUNTIME_CACHE.clear()
+    _QWEN3GUARD_RUNTIME_CACHE.clear()
+    _ONE_CASE_MULTIMODAL_RUNTIME_CACHE.clear()
+    _QWEN_VL_PROMPT_BINARY_RUNTIME_CACHE.clear()
+    gc.collect()
+    _empty_accelerator_cache()
+
+
+def _release_object_resources(owner: Any, seen: set[int]) -> None:
+    if owner is None:
+        return
+    owner_id = id(owner)
+    if owner_id in seen:
+        return
+    seen.add(owner_id)
+
+    for attr_name in ("_backend", "_runtime", "runtime"):
+        if hasattr(owner, attr_name):
+            try:
+                setattr(owner, attr_name, None)
+            except (AttributeError, TypeError):
+                pass
+
+    for attr_name in ("provider", "generator"):
+        if hasattr(owner, attr_name):
+            _release_object_resources(getattr(owner, attr_name), seen)
+
+    if isinstance(owner, dict):
+        for value in owner.values():
+            _release_object_resources(value, seen)
+    elif isinstance(owner, (list, tuple, set)):
+        for value in owner:
+            _release_object_resources(value, seen)
+
+
+def _empty_accelerator_cache() -> None:
+    try:
+        import torch
+    except Exception:
+        return
+
+    try:
+        if hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    npu = getattr(torch, "npu", None)
+    if npu is not None:
+        try:
+            if hasattr(npu, "is_available") and npu.is_available():
+                npu.empty_cache()
+        except Exception:
+            pass
 
 
 def load_provider_config(path: str | Path) -> dict[str, Any]:
@@ -1084,6 +1245,8 @@ def build_multimodal_provider(config: dict[str, Any]) -> MultimodalCaseProvider:
         )
     if provider_type in {"qwen_vl_projection_probe", "one_case_multimodal_probe"}:
         return build_qwen_vl_projection_probe_provider(config)
+    if provider_type in {"qwen_vl_prompt_binary", "qwen_vl_base_prompt_binary"}:
+        return build_qwen_vl_prompt_binary_provider(config)
     raise ValueError(f"unknown multimodal provider type: {provider_type!r}")
 
 
@@ -1100,6 +1263,19 @@ def build_qwen_vl_projection_probe_provider(config: dict[str, Any]) -> QwenVlPro
         token_slice=config.get("token_slice", "all"),
         probe_input_dim=int(config.get("probe_input_dim", 248320)),
         threshold=float(config.get("threshold", 0.5)),
+        cache_model=bool(config.get("cache_model", True)),
+        disable_torch_compile=bool(config.get("disable_torch_compile", False)),
+        patch_torch_distributed_tensor=bool(config.get("patch_torch_distributed_tensor", False)),
+    )
+
+
+def build_qwen_vl_prompt_binary_provider(config: dict[str, Any]) -> QwenVlPromptBinaryProvider:
+    return QwenVlPromptBinaryProvider(
+        model_path=resolve_provider_path(config["model_path"], config),
+        prompt_template=str(config["prompt_template"]),
+        device=str(config.get("device", "auto")),
+        max_new_tokens=int(config.get("max_new_tokens", 256)),
+        default_confidence=config.get("default_confidence"),
         cache_model=bool(config.get("cache_model", True)),
         disable_torch_compile=bool(config.get("disable_torch_compile", False)),
         patch_torch_distributed_tensor=bool(config.get("patch_torch_distributed_tensor", False)),
@@ -1199,6 +1375,7 @@ def build_local_text_generation_provider(config: dict[str, Any]) -> LocalTextGen
         model_path=resolve_provider_path(config["model_path"], config),
         max_new_tokens=int(config.get("max_new_tokens", 128)),
         trust_remote_code=bool(config.get("trust_remote_code", True)),
+        device=str(config.get("device", "auto")),
         device_map=config.get("device_map", "auto"),
         torch_dtype=_optional_string(config.get("torch_dtype", "auto")),
         max_memory=config.get("max_memory"),
@@ -1543,6 +1720,7 @@ def _load_transformers_backend(
     *,
     model_path: str,
     trust_remote_code: bool,
+    device: str,
     device_map: Any | None,
     torch_dtype: str | None,
     max_memory: dict[Any, Any] | None,
@@ -1577,6 +1755,8 @@ def _load_transformers_backend(
 
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust_remote_code)
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+        if device_map is None and str(device).strip().casefold() != "auto":
+            model.to(str(device))
         return _TransformersBackend(tokenizer=tokenizer, model=model)
     finally:
         if original_torch_compile is not None:

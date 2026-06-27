@@ -63,6 +63,7 @@ outputs/runs/demo/
 - `classifier_head_model`：标准化 case 输入，分类头返回 `0/1`，可带 `confidence`。
 - `refusal_probe`：把问题包装后送入安全对齐模型，用拒答信号辅助判断。
 - `multimodal_probe`：针对图片等多模态输入的探针入口。
+- `progressive_rule_classifier`：多轮 markdown 规则分类器；首轮只暴露规则目录，由模型输出 `load_rules` 请求，harness 读取对应规则文件后再让模型输出最终 `safe` / `unsafe`。
 
 例如接入一个 prompt 二分类接口：
 
@@ -82,6 +83,33 @@ steps:
 真实服务地址、鉴权环境变量、超时时间写在 `configs/providers/*.yaml`；prompt 写在 `configs/prompts/*.txt`；词典写在 `dictionaries/*.yaml`。如果只是换 prompt、阈值、词典或 provider 配置，新增一个 method id 即可。只有接入全新的算法形态时，才需要在 `src/safeguard_harness/methods.py` 中实现新 method，并在 `src/safeguard_harness/config.py` 中注册 YAML 加载逻辑。
 
 历史配置里的 `llm_safety` 仍可兼容加载，但新配置统一写 `prompt_binary_model`。同一个 provider 配不同 prompt 时，应写成不同 method id，例如 `safety_prompt_v1`、`safety_prompt_v2`。
+
+如果规则太长，不适合全部塞进单轮 prompt，可以用 `progressive_rule_classifier`。规则目录写在 YAML manifest，具体规则写在 markdown：
+
+```yaml
+methods:
+  progressive_rules_v1:
+    type: progressive_rule_classifier
+    provider_config: ../providers/ascend_vllm_safeguard_generation.yaml
+    rule_manifest_path: ../rules/progressive_rule_manifest.yaml
+    max_rule_rounds: 2
+    max_rule_files: 3
+    default_confidence: 0.70
+```
+
+manifest 示例：
+
+```yaml
+rules:
+  - id: privacy
+    description: 隐私、个人信息、跟踪、泄露、勒索相关规则。
+    path: privacy.md
+  - id: cyber
+    description: 钓鱼、恶意代码、凭据、绕过访问控制相关规则。
+    path: cyber.md
+```
+
+模型首轮只看到 `id` 和 `description`，可以输出 `{"action":"load_rules","rule_ids":["privacy"]}`；harness 会读取对应 markdown 并发起下一轮。最终必须输出 `{"action":"final","label":"safe 或 unsafe","confidence":0.0,"applied_rules":["privacy"],"reason":"..."}`。
 
 ## Quick Start: Train
 
@@ -136,6 +164,32 @@ python -m safeguard_harness predict --pipeline configs/pipelines/prod_v1.yaml --
 
 推理阶段应固定 pipeline、prompt、词典、provider 配置和阈值；真实 API key 通过环境变量提供，不写入仓库。
 
+### 资源感知批量推理
+
+当一个固定 pipeline 同时包含基座模型、LoRA 27B、Qwen3Guard 8B 和多模态模型时，可以在 pipeline YAML 顶层配置 `batch_scheduler`。该配置只影响 `predict` / `evaluate` 的批量路径；`judge` 单条判断仍按原 static runner 顺序执行。
+
+当前 `configs/pipelines/final.yaml` 指向的 S5 ensemble 已开启资源感知调度：
+
+```yaml
+batch_scheduler:
+  enabled: true
+  multimodal_pipeline: single_multimodal_probe_v1.yaml
+  stages:
+    - id: text_base
+      methods: [progressive_rules_v1]
+      case_filter: text
+    - id: lora_27b
+      methods: [policy_classifier_v1, intent_classifier_v1]
+      case_filter: text
+    - id: refusal_8b
+      methods: [refusal_probe_v1]
+      case_filter: text_input
+```
+
+批量运行时，runner 会先把图片 case 交给 `single_multimodal_probe_v1.yaml`，文本 case 保留输出侧多轮 Q&A 拆分逻辑；随后按 stage 顺序运行所有文本 case。每个 stage 结束后会释放本地模型/runtime 缓存并清理 CUDA/NPU cache，从而避免在两张 64G 卡上同时驻留基座、LoRA、8B 和 VL 模型。
+
+中间结果会落到临时目录：`evaluate` 默认写入 `<output>/intermediate_results/stages/*.jsonl`，`predict` 默认写入 `<output_stem>_intermediate/stages/*.jsonl`。最终 `predictions.jsonl` / `deliverable.jsonl` 仍保持原格式。
+
 ## 目录结构
 
 ```text
@@ -143,7 +197,7 @@ src/safeguard_harness/
   core.py           # SafetyCase, MethodResult, Decision, RunTrace
   providers.py      # prompt 0/1 API、分类头 API、本地模型路径和 mock provider
   methods.py        # judge method；ModelJudgeMethod 统一封装所有模型判别
-  orchestration.py  # static runner, ReAct runner, loop control, aggregation
+  orchestration.py  # static runner, ReAct runner, resource-aware batch scheduling, aggregation
   config.py         # YAML config -> pipeline/method construction
   datasets.py       # JSONL dataset IO
   evaluation.py     # metrics, predictions, reports, error slices

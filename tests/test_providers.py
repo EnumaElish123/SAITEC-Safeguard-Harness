@@ -13,6 +13,7 @@ from safeguard_harness.providers import (
     LocalPromptBinaryProvider,
     PromptBinaryApiProvider,
     Qwen3GuardProvider,
+    QwenVlPromptBinaryProvider,
     QwenVlProjectionProbeProvider,
     SubprocessTextGenerationProvider,
     _extract_question_answer_prompt,
@@ -179,6 +180,7 @@ def test_project_owned_runtime_provider_configs_do_not_expose_script_paths():
         "local_qwen3guard_gen8b_refusal_probe.yaml",
         "local_qwen3guard_gen8b_refusal_probe_veto_safe.yaml",
         "local_qwen3_6_vl_projection_probe.yaml",
+        "local_qwen3_6_vl_prompt_binary.yaml",
     ]
 
     for provider_name in provider_names:
@@ -206,6 +208,13 @@ def test_project_owned_runtime_providers_default_to_auto_device():
             "probe_model_path": "models/qwen36_model_lr.pth",
         }
     )
+    vl_prompt_provider = build_multimodal_provider(
+        {
+            "type": "qwen_vl_prompt_binary",
+            "model_path": "/models/qwen-vl",
+            "prompt_template": "Judge: {question}",
+        }
+    )
 
     assert isinstance(binary_provider, LocalPromptBinaryProvider)
     assert isinstance(binary_provider.generator, MergedSafeGuardProvider)
@@ -213,6 +222,23 @@ def test_project_owned_runtime_providers_default_to_auto_device():
     assert isinstance(guard_provider, Qwen3GuardProvider)
     assert isinstance(image_provider, QwenVlProjectionProbeProvider)
     assert image_provider.device == "auto"
+    assert isinstance(vl_prompt_provider, QwenVlPromptBinaryProvider)
+    assert vl_prompt_provider.device == "auto"
+
+
+def test_local_text_generation_provider_accepts_explicit_device():
+    provider = build_text_generation_provider(
+        {
+            "type": "local_text_generation_lm",
+            "model_path": "/models/qwen",
+            "device": "npu:1",
+            "device_map": None,
+        }
+    )
+
+    assert isinstance(provider, LocalTextGenerationProvider)
+    assert provider.device == "npu:1"
+    assert provider.device_map is None
 
 
 def test_project_owned_runtime_provider_configs_use_auto_without_hardcoded_memory_controls():
@@ -223,7 +249,9 @@ def test_project_owned_runtime_provider_configs_use_auto_without_hardcoded_memor
     assert "max_memory" not in binary_config
     assert "offload_folder" not in binary_config
     assert isinstance(generator, MergedSafeGuardProvider)
-    assert generator.device_map == "auto"
+    assert generator.model_path == "/data/model/Qwen36-27B-SFT"
+    assert generator.device == "npu:1"
+    assert generator.device_map is None
     assert generator.max_memory is None
     assert generator.offload_folder is None
 
@@ -255,6 +283,61 @@ def test_build_mock_multimodal_provider_scores_case_attachments():
     assert output.label == 1
     assert output.confidence == 0.77
     assert output.raw["provider"] == "mock_multimodal_probe"
+
+
+def test_qwen_vl_prompt_binary_provider_renders_case_and_parses_response():
+    class FakeRuntime:
+        model = object()
+        processor = object()
+        device = "cuda:0"
+
+        class module:
+            calls = []
+
+            @classmethod
+            def qwen_vl_batch_infer(cls, model, processor, prompts, image_paths, max_new_tokens):
+                cls.calls.append(
+                    {
+                        "model": model,
+                        "processor": processor,
+                        "prompts": prompts,
+                        "image_paths": image_paths,
+                        "max_new_tokens": max_new_tokens,
+                    }
+                )
+                return ['{"label":"unsafe","reason":"visible dangerous instruction"}']
+
+    provider = QwenVlPromptBinaryProvider(
+        model_path="/models/qwen-vl",
+        prompt_template="Question: {question}\nImages: {attachments}",
+        max_new_tokens=48,
+        runtime=FakeRuntime(),
+    )
+
+    output = provider.classify_case(
+        SafetyCase.from_dict(
+            {
+                "id": "img",
+                "question": "请描述这张图",
+                "image": "/tmp/demo.png",
+            }
+        )
+    )
+
+    assert output.label == 1
+    assert output.confidence is None
+    assert output.raw["provider"] == "qwen_vl_prompt_binary"
+    assert output.raw["image_path"] == "/tmp/demo.png"
+    assert output.raw["response"] == '{"label":"unsafe","reason":"visible dangerous instruction"}'
+    assert FakeRuntime.module.calls == [
+        {
+            "model": FakeRuntime.model,
+            "processor": FakeRuntime.processor,
+            "prompts": ["Question: 请描述这张图\nImages: /tmp/demo.png"],
+            "image_paths": ["/tmp/demo.png"],
+            "max_new_tokens": 48,
+        }
+    ]
 
 
 def test_cached_multimodal_provider_loads_prediction_by_case_id(tmp_path: Path):

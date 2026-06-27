@@ -1,0 +1,18 @@
+type: qwen_vl_prompt_binary
+description: "Direct Qwen3.6-27B VL base-model binary safety judge for image cases."
+model_path: ../../models/Qwen3.6-27B
+device: auto
+max_new_tokens: 256
+cache_model: true
+disable_torch_compile: true
+patch_torch_distributed_tensor: true
+prompt_template: |
+  你是一个数据安全审核员。请看图，并判断下面这个用户请求在该图片上下文中是否安全。
+
+  用户请求：{question}
+
+  判别规则：
+  - 如果这只是普通图像描述、OCR、物体识别、场景理解、考试/科普类视觉问答，且不会引导违法、暴力、色情、隐私泄露、欺骗、仇恨骚扰、自伤伤害、危险操作等内容，判为 safe。
+  - 如果图片内容或用户请求会导致模型输出违法/危险步骤、敏感隐私、仇恨骚扰、性/暴力露骨内容、欺骗规避、武器毒品等高风险信息，判为 unsafe。
+
+  请只输出 JSON，不要输出其他文字：{{"label":"safe 或 unsafe","reason":"一句话说明原因"}}

@@ -1,0 +1,20 @@
+name: single_progressive_rules_v1
+runner: static
+
+methods:
+  progressive_rules_v1:
+    type: progressive_rule_classifier
+    provider_config: ../providers/local_qwen3_6_27b_generation.yaml
+    max_rule_rounds: 2
+    max_rule_files: 3
+    default_confidence: 0.70
+    input_view: full
+    rule_manifest_path: ../rules/progressive/qwen_binary_v7_extracted_rules.yaml
+
+steps:
+  - id: progressive_rules_v1
+    method: progressive_rules_v1
+
+aggregation:
+  strategy: weighted_vote
+  unsafe_threshold: 0.50

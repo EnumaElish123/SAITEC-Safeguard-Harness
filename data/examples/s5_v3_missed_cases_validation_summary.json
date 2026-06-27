@@ -1,0 +1,217 @@
+{
+  "generated_from": [
+    "data/examples/s5_augmented_labeled_180_v3.jsonl",
+    "data/examples/missed_cases_validation.jsonl"
+  ],
+  "output": "data/examples/s5_v3_missed_cases_validation.jsonl",
+  "dedupe_key": [
+    "type",
+    "is_mt",
+    "label",
+    "messages"
+  ],
+  "source_rows": 539,
+  "output_rows": 525,
+  "exact_duplicate_rows_removed": 14,
+  "by_label": {
+    "unsafe": 231,
+    "safe": 294
+  },
+  "by_type": {
+    "输入侧": 330,
+    "输出侧": 195
+  },
+  "by_modality": {
+    "text": 511,
+    "image": 14
+  },
+  "source_summaries": {
+    "s5_augmented_labeled_180_v3": {
+      "path": "data/examples/s5_augmented_labeled_180_v3.jsonl",
+      "rows": 180,
+      "by_label": {
+        "unsafe": 90,
+        "safe": 90
+      },
+      "by_type": {
+        "输入侧": 104,
+        "输出侧": 76
+      },
+      "by_modality": {
+        "text": 180
+      }
+    },
+    "missed_cases_validation": {
+      "path": "data/examples/missed_cases_validation.jsonl",
+      "rows": 359,
+      "by_label": {
+        "safe": 204,
+        "unsafe": 155
+      },
+      "by_type": {
+        "输入侧": 226,
+        "输出侧": 133
+      },
+      "by_modality": {
+        "text": 345,
+        "image": 14
+      }
+    }
+  },
+  "duplicate_rows": [
+    {
+      "duplicate_key": "10184d4f3cf6039edd59090e15d42381fe1e5f7cdefc50e550bd32b03d048068",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 157,
+      "skipped_id": 430036,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 107,
+      "kept_id": 330086,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "51778ef15b151a7c6dcde721965481fb7a0ae0848279ce1bb5a70ea228ce60ab",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 158,
+      "skipped_id": 430037,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 108,
+      "kept_id": 330087,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "448a982662150bb1caca7629a9e1f63082b324a15f3b18a2629911559e6561cd",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 159,
+      "skipped_id": 430038,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 109,
+      "kept_id": 330088,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "46910f15eba2fd12ce6bf856f6e604115ef29fa6133cd1fc0463cfa6b9d8b11f",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 160,
+      "skipped_id": 430039,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 110,
+      "kept_id": 330089,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "b88f42e6776802741a3e9b8ee892a3ce28a05c7e8027ee00b1d623639e49027b",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 161,
+      "skipped_id": 430040,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 111,
+      "kept_id": 330090,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "5f9381ea3472d3f91192b47ab6c91aac33d54f0dea274ba7754574bae038391f",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 162,
+      "skipped_id": 430041,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 112,
+      "kept_id": 330091,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "08b966fba8bdb444ca0b26dea9b133f8dbe12a6e9d02283a5e262f050dee47ab",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 163,
+      "skipped_id": 430042,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 113,
+      "kept_id": 330092,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "2fd157204538c7a664c4f846777a303ba1ad5ae25682a41a674881b402b317f9",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 164,
+      "skipped_id": 430043,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 114,
+      "kept_id": 330093,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "15b8f4596f8bf9375a2c612cecb3af4734d992724bf1105cad08f0d09790180c",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 165,
+      "skipped_id": 430044,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 115,
+      "kept_id": 330094,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "a83470dd6e388d3be7c24f4ec29de57208473e1cc0a87b51d5fa41e19aad9721",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 166,
+      "skipped_id": 430045,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 116,
+      "kept_id": 330095,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "6966ac8690f3ff69298bf8047592ba7a617bec0810ea6385c8e4879bb57e7a36",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 167,
+      "skipped_id": 430046,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 117,
+      "kept_id": 330096,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "076f992bd634401516321d18b48dfc2d357d29e249c037bbb63014bcb9f4a0e2",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 168,
+      "skipped_id": 430047,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 118,
+      "kept_id": 330097,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "35366e0214a8c60be3a7b7aaeda4b20f767f95b6de48a7867cf2ec4de066ac71",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 169,
+      "skipped_id": 430048,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 119,
+      "kept_id": 330098,
+      "label": "unsafe",
+      "type": "输出侧"
+    },
+    {
+      "duplicate_key": "a475818fbf3382e076258aa22b9de7854be2c44754ee8123e15bdb4c66bb86c7",
+      "skipped_source": "s5_augmented_labeled_180_v3",
+      "skipped_line": 170,
+      "skipped_id": 430049,
+      "kept_source": "s5_augmented_labeled_180_v3",
+      "kept_line": 120,
+      "kept_id": 330099,
+      "label": "unsafe",
+      "type": "输出侧"
+    }
+  ]
+}

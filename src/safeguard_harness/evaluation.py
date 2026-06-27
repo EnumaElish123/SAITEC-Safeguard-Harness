@@ -47,8 +47,8 @@ def evaluate_dataset(
         with predictions_path.open("w", encoding="utf-8") as prediction_handle, deliverable_path.open(
             "w", encoding="utf-8"
         ) as deliverable_handle:
-            for index, case in enumerate(case_list, start=1):
-                decision = pipeline.judge(case)
+            decisions_iter = pipeline.judge_many(case_list, intermediate_dir=output / "intermediate_results")
+            for index, (case, decision) in enumerate(zip(case_list, decisions_iter), start=1):
                 decisions.append((case, decision))
                 row = {"case": case.to_dict(), "decision": decision.to_dict()}
                 predictions.append(row)
