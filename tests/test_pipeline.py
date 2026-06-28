@@ -28,6 +28,21 @@ class RecordingMethod(JudgeMethod):
         )
 
 
+class SkippingMethod(JudgeMethod):
+    def __init__(self, method_id: str):
+        self.method_id = method_id
+
+    def judge(self, case: SafetyCase, context: RunContext | None = None) -> MethodResult:
+        return MethodResult(
+            method_id=self.method_id,
+            label="unknown",
+            unsafe_score=0.0,
+            confidence=0.0,
+            evidence=["method skipped without a final verdict"],
+            skipped=True,
+        )
+
+
 def test_static_pipeline_short_circuits_on_high_risk_rule(tmp_path: Path):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(
@@ -326,6 +341,50 @@ aggregation:
     assert "[lora_27b]" in stderr
     assert "[refusal_8b]" in stderr
     assert "100.0%" in stderr
+
+
+def test_side_branch_rules_treat_skipped_required_method_as_neutral_result():
+    pipeline = StaticPipeline(
+        runner="static",
+        methods={
+            "progressive_rules_v1": SkippingMethod("progressive_rules_v1"),
+            "policy_classifier_v1": RecordingMethod("policy_classifier_v1", []),
+            "intent_classifier_v1": RecordingMethod("intent_classifier_v1", [], unsafe_keywords=["intent_bad"]),
+            "refusal_probe_v1": RecordingMethod("refusal_probe_v1", []),
+        },
+        steps=[
+            {"id": "progressive_rules_v1", "method": "progressive_rules_v1"},
+            {"id": "policy_classifier_v1", "method": "policy_classifier_v1"},
+            {"id": "intent_classifier_v1", "method": "intent_classifier_v1"},
+            {"id": "refusal_probe_v1", "method": "refusal_probe_v1"},
+        ],
+        aggregation={
+            "strategy": "side_branch_rules",
+            "side_metadata_key": "type",
+            "input_rule": {
+                "type": "weighted_score_threshold",
+                "methods": [
+                    "progressive_rules_v1",
+                    "policy_classifier_v1",
+                    "intent_classifier_v1",
+                    "refusal_probe_v1",
+                ],
+                "weights": [1, 1, 3, 2],
+                "threshold": 3.0,
+            },
+        },
+    )
+
+    decision = pipeline.judge(SafetyCase(id="input_text", question="intent_bad", metadata={"type": "输入侧"}))
+
+    assert decision.label == "unsafe"
+    assert decision.metadata["rule_methods"] == [
+        "progressive_rules_v1",
+        "policy_classifier_v1",
+        "intent_classifier_v1",
+        "refusal_probe_v1",
+    ]
+    assert decision.metadata["raw_weighted_score"] == pytest.approx(3.0)
 
 
 def test_static_pipeline_keeps_multi_turn_input_side_as_one_case(tmp_path: Path):

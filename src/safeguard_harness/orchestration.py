@@ -54,11 +54,15 @@ class Pipeline:
     def aggregate(self, case_id: str, trace: RunTrace, case: SafetyCase | None = None) -> Decision:
         threshold = float(self.aggregation.get("unsafe_threshold", 0.5))
         strategy = str(self.aggregation.get("strategy", "max"))
-        results = [
+        all_results = [
             step.result
             for step in trace.steps
-            if not step.result.skipped and step.metadata.get("include_in_aggregation", True) is not False
+            if step.metadata.get("include_in_aggregation", True) is not False
         ]
+        if strategy == "side_branch_rules":
+            results = all_results
+        else:
+            results = [result for result in all_results if not result.skipped]
         if not results:
             return Decision(
                 case_id=case_id,

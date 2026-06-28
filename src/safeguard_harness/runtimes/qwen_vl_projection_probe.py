@@ -54,8 +54,20 @@ def load_image(image_input: Any) -> Any:
     if isinstance(image_input, Image.Image):
         return image_input.convert("RGB")
     if isinstance(image_input, str):
-        return Image.open(image_input).convert("RGB")
+        return Image.open(resolve_image_path(image_input)).convert("RGB")
     raise ValueError(f"unsupported image input type: {type(image_input)}")
+
+
+def resolve_image_path(image_input: str) -> Path:
+    image_path = Path(image_input).expanduser()
+    if image_path.exists():
+        return image_path
+
+    fallback = Path(__file__).resolve().parents[3] / "data" / "example-s5-images" / image_path.name
+    if fallback.exists():
+        return fallback
+
+    return image_path
 
 
 def resolve_sample(data: Any, index: int) -> tuple[Any, str, Any, dict[str, Any]]:

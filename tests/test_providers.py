@@ -229,6 +229,17 @@ def test_project_owned_runtime_providers_default_to_auto_device():
     assert vl_prompt_provider.device == "auto"
 
 
+def test_qwen_vl_runtime_falls_back_to_repo_s5_images_for_missing_data_paths():
+    pytest.importorskip("PIL.Image")
+    from safeguard_harness.runtimes.qwen_vl_projection_probe import load_image
+
+    image = load_image("/data/testexample/example-s5-补充/T1.jpg")
+
+    assert image.mode == "RGB"
+    assert image.size[0] > 0
+    assert image.size[1] > 0
+
+
 def test_local_text_generation_provider_accepts_explicit_device():
     provider = build_text_generation_provider(
         {

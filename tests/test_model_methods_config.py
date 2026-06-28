@@ -386,7 +386,7 @@ def test_final_and_final_prod_use_separate_environment_provider_configs():
 
     assert prod.raw_config["name"] == "s5_side_constrained_ensemble_v1"
     assert isinstance(prod_progressive.provider, LocalTextGenerationProvider)
-    assert prod_progressive.provider.model_path == "/data/model/Qwen36-27B-SFT"
+    assert prod_progressive.provider.model_path == "/data/model/Qwen36-27B"
     assert prod_progressive.provider.device == "npu:1"
     assert prod_progressive.provider.device_map is None
 
